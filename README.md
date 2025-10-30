@@ -525,7 +525,7 @@ Este proyecto está bajo la Licencia MIT. Ver archivo `LICENSE` para más detall
 
 ## Contacto
 
-AvalonTM - [@tu_twitter](https://twitter.com/tu_twitter) - tu.email@example.com
+AvalonTM - [@avalontm](https://twitter.com/avalontm) - avalontm21@gmail.com
 
 Link del Proyecto: [https://github.com/avalontm/gemini-api-server](https://github.com/avalontm/gemini-api-server)
 
