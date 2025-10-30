@@ -1,318 +1,150 @@
-# Estructura del Servidor Node.js - Gemini API Project
-### Con Autenticación de Usuarios, MongoDB y Swagger Automático
+# Gemini API Server
 
-## Estructura de Carpetas
+[![Node.js](https://img.shields.io/badge/Node.js-v18+-green.svg)](https://nodejs.org/)
+[![Express](https://img.shields.io/badge/Express-v5.x-blue.svg)](https://expressjs.com/)
+[![MongoDB](https://img.shields.io/badge/MongoDB-v8.x-green.svg)](https://www.mongodb.com/)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+Servidor API RESTful con integración de Google Gemini AI, autenticación JWT, gestión de usuarios y documentación automática con Swagger.
+
+## Descripción del Proyecto
+
+Este proyecto es un servidor backend completo desarrollado con Node.js y Express que proporciona una interfaz segura para interactuar con la API de Google Gemini AI. Incluye autenticación de usuarios, gestión de conversaciones, procesamiento de archivos multimedia y documentación interactiva.
+
+### Características Principales
+
+- Integración completa con Google Gemini AI (texto, imágenes, voz, PDF, multimodal)
+- Sistema de autenticación JWT con cookies seguras
+- Gestión de usuarios y perfiles
+- Historial de conversaciones persistente en MongoDB
+- Procesamiento de archivos (imágenes, audio, PDFs)
+- Rate limiting y seguridad avanzada
+- Documentación API automática con Swagger
+- Logs estructurados con Winston
+- Exportación de conversaciones (PDF/TXT)
+- Arquitectura modular y escalable
+
+## Tecnologías Utilizadas
+
+### Backend
+- **Node.js** (v18+) - Entorno de ejecución
+- **Express.js** (v5.x) - Framework web
+- **MongoDB** (v8.x) - Base de datos NoSQL
+- **Mongoose** - ODM para MongoDB
+
+### Autenticación y Seguridad
+- **JWT** (jsonwebtoken) - Tokens de autenticación
+- **bcryptjs** - Encriptación de contraseñas
+- **Helmet** - Headers de seguridad HTTP
+- **express-rate-limit** - Limitación de peticiones
+- **CORS** - Control de acceso entre dominios
+
+### Procesamiento de Archivos
+- **Multer** - Upload de archivos
+- **Sharp** - Procesamiento de imágenes
+- **pdf-parse** - Extracción de texto de PDFs
+
+### IA y API Externa
+- **@google/generative-ai** - Cliente de Gemini API
+
+### Documentación y Logs
+- **Swagger UI Express** - Interfaz de documentación
+- **swagger-jsdoc** - Generación de specs OpenAPI
+- **Winston** - Sistema de logging
+
+### Desarrollo
+- **nodemon** - Hot reload en desarrollo
+- **dotenv** - Gestión de variables de entorno
+- **ESLint** - Linter de código
+- **Prettier** - Formateador de código
+
+## Estructura del Proyecto
 
 ```
 gemini-api-server/
-│
 ├── src/
+│   ├── config/              # Configuraciones centralizadas
+│   │   ├── database.js      # Conexión MongoDB
+│   │   ├── gemini.config.js # Configuración Gemini API
+│   │   ├── cors.config.js   # Configuración CORS
+│   │   ├── jwt.config.js    # Configuración JWT
+│   │   └── swagger.config.js # Configuración Swagger
 │   │
-│   ├── config/
-│   │   ├── index.js                    # Exporta toda la configuración centralizada
-│   │   ├── database.js                 # Configuración conexión MongoDB
-│   │   ├── gemini.config.js            # Configuración API Gemini (modelo, temperature, etc)
-│   │   ├── multer.config.js            # Configuración subida de archivos
-│   │   ├── cors.config.js              # Configuración CORS
-│   │   ├── jwt.config.js               # Configuración JWT (secret, expiration)
-│   │   ├── swagger.config.js           # Configuración Swagger UI y OpenAPI
-│   │   └── constants.js                # Constantes globales (límites, tipos MIME, etc)
+│   ├── controllers/         # Controladores de rutas
+│   │   ├── auth/           # Autenticación
+│   │   └── gemini/         # Endpoints Gemini
 │   │
-│   ├── decorators/
-│   │   └── swagger.decorator.js        # Decoradores para metadata de Swagger
+│   ├── services/           # Lógica de negocio
+│   │   ├── auth/           # Servicios de autenticación
+│   │   ├── gemini/         # Servicios Gemini AI
+│   │   ├── processing/     # Procesamiento de archivos
+│   │   ├── database/       # Gestión de datos
+│   │   └── utils/          # Utilidades
 │   │
-│   ├── controllers/
-│   │   ├── auth/
-│   │   │   ├── register.controller.js  # Registro de usuarios
-│   │   │   ├── login.controller.js     # Login de usuarios
-│   │   │   ├── logout.controller.js    # Logout y limpieza de sesión
-│   │   │   └── profile.controller.js   # Obtener/actualizar perfil
-│   │   │
-│   │   ├── gemini/
-│   │   │   ├── text.controller.js      # Consultas de texto simples
-│   │   │   ├── image.controller.js     # Análisis de imágenes
-│   │   │   ├── voice.controller.js     # Transcripción de voz
-│   │   │   ├── multimodal.controller.js # Consultas combinadas
-│   │   │   └── pdf.controller.js       # Análisis de documentos PDF
-│   │   │
-│   │   ├── conversation.controller.js  # CRUD conversaciones del usuario
-│   │   ├── export.controller.js        # Exportar conversaciones (PDF/TXT)
-│   │   └── docs.controller.js          # Controlador para Swagger UI
+│   ├── middlewares/        # Middlewares personalizados
+│   │   ├── auth/           # Autenticación y autorización
+│   │   ├── errorHandler.js # Manejo global de errores
+│   │   ├── rateLimiter.js  # Rate limiting
+│   │   └── validation.js   # Validaciones
 │   │
-│   ├── services/
-│   │   ├── auth/
-│   │   │   ├── auth.service.js         # Lógica de autenticación
-│   │   │   ├── password.service.js     # Hasheo y comparación de passwords
-│   │   │   ├── token.service.js        # Generación y validación de JWT
-│   │   │   └── session.service.js      # Gestión de sesiones activas
-│   │   │
-│   │   ├── gemini/
-│   │   │   ├── geminiClient.service.js # Cliente principal de Gemini API
-│   │   │   ├── textGeneration.service.js # Generación de texto
-│   │   │   ├── visionAnalysis.service.js # Análisis visual
-│   │   │   └── streamResponse.service.js # Respuestas en streaming
-│   │   │
-│   │   ├── processing/
-│   │   │   ├── imageProcessor.service.js # Redimensionar, comprimir imágenes
-│   │   │   ├── audioProcessor.service.js # Procesar audio para transcripción
-│   │   │   ├── pdfParser.service.js      # Extraer texto de PDFs
-│   │   │   └── textFormatter.service.js  # Formateo de respuestas
-│   │   │
-│   │   ├── database/
-│   │   │   ├── user.service.js         # CRUD usuarios
-│   │   │   ├── conversation.service.js # CRUD conversaciones
-│   │   │   └── message.service.js      # CRUD mensajes
-│   │   │
-│   │   ├── swagger/
-│   │   │   ├── swaggerGenerator.service.js  # Genera spec OpenAPI automáticamente
-│   │   │   ├── routeScanner.service.js      # Escanea rutas de Express
-│   │   │   ├── jsdocParser.service.js       # Parsea comentarios JSDoc
-│   │   │   └── schemaBuilder.service.js     # Construye schemas OpenAPI
-│   │   │
-│   │   └── utils/
-│   │       ├── tokenCounter.service.js   # Contador tokens y costos estimados
-│   │       ├── exportPDF.service.js      # Generar PDFs de conversaciones
-│   │       ├── exportTXT.service.js      # Generar TXT de conversaciones
-│   │       └── fileStorage.service.js    # Limpieza archivos temporales
+│   ├── routes/             # Definición de rutas
+│   │   ├── auth/           # Rutas de autenticación
+│   │   └── api/            # Rutas de API
 │   │
-│   ├── middlewares/
-│   │   ├── auth/
-│   │   │   ├── authenticate.js         # Verificar JWT y autenticar usuario
-│   │   │   ├── authorize.js            # Verificar permisos/roles
-│   │   │   └── validateToken.js        # Validar formato del token
-│   │   │
-│   │   ├── errorHandler.js             # Manejador global de errores
-│   │   ├── asyncHandler.js             # Wrapper para async/await
-│   │   ├── validation.js               # Validaciones de entrada
-│   │   ├── fileUpload.js               # Middleware Multer configurado
-│   │   ├── rateLimiter.js              # Rate limiting por IP/Usuario
-│   │   ├── requestLogger.js            # Log de todas las requests
-│   │   └── sanitizer.js                # Sanitización de inputs
+│   ├── models/             # Modelos de Mongoose
+│   │   ├── User.model.js
+│   │   ├── Conversation.model.js
+│   │   └── Message.model.js
 │   │
-│   ├── routes/
-│   │   ├── index.js                    # Router principal (agrega todas las rutas)
-│   │   │
-│   │   ├── auth/
-│   │   │   └── auth.routes.js          # POST /api/auth/register, /login, /logout
-│   │   │
-│   │   ├── api/
-│   │   │   ├── text.routes.js          # POST /api/gemini/text
-│   │   │   ├── image.routes.js         # POST /api/gemini/image
-│   │   │   ├── voice.routes.js         # POST /api/gemini/voice
-│   │   │   ├── multimodal.routes.js    # POST /api/gemini/multimodal
-│   │   │   ├── pdf.routes.js           # POST /api/gemini/pdf
-│   │   │   ├── conversation.routes.js  # GET/POST/DELETE /api/conversations
-│   │   │   ├── export.routes.js        # GET /api/export/:conversationId
-│   │   │   ├── user.routes.js          # GET/PUT /api/user/profile
-│   │   │   └── docs.routes.js          # GET /api/docs (Swagger UI)
-│   │   │
-│   │   └── health.routes.js            # GET /health, /status
+│   ├── utils/              # Funciones auxiliares
+│   │   ├── validators/     # Validadores
+│   │   ├── helpers/        # Helpers
+│   │   └── logger.js       # Winston logger
 │   │
-│   ├── utils/
-│   │   ├── validators/
-│   │   │   ├── authValidator.js        # Validar email, password, username
-│   │   │   ├── fileValidator.js        # Validar tipo, tamaño de archivos
-│   │   │   ├── textValidator.js        # Validar longitud, caracteres
-│   │   │   └── imageValidator.js       # Validar formato, dimensiones
-│   │   │
-│   │   ├── helpers/
-│   │   │   ├── fileHelper.js           # Crear/eliminar archivos temporales
-│   │   │   ├── responseFormatter.js    # Formatear respuestas consistentes
-│   │   │   ├── errorMessages.js        # Mensajes de error centralizados
-│   │   │   └── dateHelper.js           # Formateo de fechas
-│   │   │
-│   │   └── logger.js                   # Winston logger configurado
-│   │
-│   ├── models/
-│   │   ├── User.model.js               # Schema de Usuario (Mongoose)
-│   │   ├── Conversation.model.js       # Schema de Conversación
-│   │   ├── Message.model.js            # Schema de Mensaje individual
-│   │   └── Session.model.js            # Schema de Sesión activa (opcional)
-│   │
-│   └── app.js                          # Configuración de Express (middlewares, routes)
+│   └── app.js              # Configuración Express
 │
-├── uploads/                            # Archivos temporales subidos (gitignored)
-│   ├── images/
-│   ├── audio/
-│   └── pdfs/
-│
-├── logs/                               # Logs de la aplicación (gitignored)
-│   ├── error.log
-│   ├── combined.log
-│   └── access.log
-│
-├── docs/
-│   ├── API_DOCUMENTATION.md            # Documentación completa de endpoints
-│   ├── SWAGGER_GUIDE.md                # Guía de uso de decoradores Swagger
-│   ├── ARCHITECTURE.md                 # Explicación de arquitectura
-│   └── SETUP.md                        # Guía de instalación y configuración
-│
-├── swagger.json                        # Spec OpenAPI generado automáticamente
-├── .env.example                        # Ejemplo de variables de entorno
-├── .env                                # Variables de entorno REAL (gitignored)
-├── .gitignore                          # Archivos ignorados por Git
-├── .eslintrc.json                      # Configuración ESLint
-├── .prettierrc                         # Configuración Prettier
-├── nodemon.json                        # Configuración Nodemon
-├── package.json                        # Dependencias y scripts
-├── package-lock.json
-├── server.js                           # Entry point - Inicia servidor
-└── README.md                           # Documentación principal del proyecto
+├── uploads/                # Archivos temporales
+├── logs/                   # Logs de aplicación
+├── docs/                   # Documentación técnica
+├── .env.example            # Ejemplo de variables
+├── server.js               # Entry point
+├── package.json
+└── README.md
 ```
 
----
+## Instalación
 
-## Esquemas de MongoDB
+### Requisitos Previos
 
-### User Model
-```javascript
-{
-  username: String,
-  email: String (unique),
-  password: String (hasheado),
-  avatar: String (opcional),
-  role: String (default: 'user'),
-  preferences: {
-    theme: String,
-    language: String
-  },
-  createdAt: Date,
-  updatedAt: Date
-}
+- Node.js v18 o superior
+- MongoDB v5 o superior (local o Atlas)
+- API Key de Google Gemini ([obtener aquí](https://makersuite.google.com/app/apikey))
+
+### Paso 1: Clonar el Repositorio
+
+```bash
+git clone https://github.com/avalontm/gemini-api-server.git
+cd gemini-api-server
 ```
 
-### Conversation Model
-```javascript
-{
-  userId: ObjectId (ref: 'User'),
-  title: String,
-  tags: [String],
-  messages: [ObjectId] (ref: 'Message'),
-  tokenUsage: {
-    total: Number,
-    estimatedCost: Number
-  },
-  createdAt: Date,
-  updatedAt: Date
-}
+### Paso 2: Instalar Dependencias
+
+```bash
+npm install
 ```
 
-### Message Model
-```javascript
-{
-  conversationId: ObjectId (ref: 'Conversation'),
-  role: String ('user' | 'assistant'),
-  content: String,
-  type: String ('text' | 'image' | 'voice' | 'multimodal'),
-  attachments: [{
-    type: String,
-    url: String,
-    name: String
-  }],
-  tokens: Number,
-  createdAt: Date
-}
+### Paso 3: Configurar Variables de Entorno
+
+Copia el archivo de ejemplo y edita las variables:
+
+```bash
+cp .env.example .env
 ```
 
-### Session Model (Opcional)
-```javascript
-{
-  userId: ObjectId (ref: 'User'),
-  token: String,
-  ipAddress: String,
-  userAgent: String,
-  expiresAt: Date,
-  createdAt: Date
-}
-```
-
----
-
-## Descripción de Carpetas Principales
-
-### config/
-Toda la configuración centralizada de la aplicación. Variables de entorno, configuración de APIs externas, constantes globales, y configuración de Swagger.
-
-### decorators/
-Decoradores y utilidades para agregar metadata a las rutas que será consumida por el generador de Swagger.
-
-### controllers/
-Capa de controladores - reciben requests HTTP, llaman a servicios, devuelven responses. Lógica de coordinación, no lógica de negocio.
-
-### services/
-Capa de lógica de negocio. Aquí va toda la lógica compleja:
-- `auth/` - Todo lo relacionado con autenticación y autorización
-- `gemini/` - Todo lo relacionado con la API de Gemini
-- `processing/` - Procesamiento de archivos (imágenes, audio, PDFs)
-- `database/` - Gestión de datos (conversaciones, sesiones)
-- `swagger/` - Generación automática de documentación OpenAPI
-- `utils/` - Servicios utilitarios (exportación, contadores)
-
-### middlewares/
-Funciones que interceptan requests antes de llegar a los controladores:
-- Validación
-- Autenticación y autorización
-- Manejo de errores
-- Rate limiting
-- Logging
-- Upload de archivos
-
-### routes/
-Definición de endpoints de la API. Cada archivo agrupa rutas relacionadas. Incluyen comentarios JSDoc para generación automática de Swagger.
-
-### utils/
-Funciones auxiliares y helpers reutilizables en toda la app:
-- Validadores específicos
-- Helpers de archivos
-- Formateadores
-- Logger
-
-### models/
-Definición de estructuras de datos con Mongoose para MongoDB.
-
----
-
-## Dependencias
-
-```json
-{
-  "dependencies": {
-    "@google/generative-ai": "^0.x.x",
-    "express": "^4.18.2",
-    "mongoose": "^8.0.3",
-    "bcryptjs": "^2.4.3",
-    "jsonwebtoken": "^9.0.2",
-    "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
-    "multer": "^1.4.5-lts.1",
-    "express-rate-limit": "^7.1.5",
-    "helmet": "^7.1.0",
-    "compression": "^1.7.4",
-    "winston": "^3.11.0",
-    "pdf-parse": "^1.1.1",
-    "sharp": "^0.33.1",
-    "express-validator": "^7.0.1",
-    "cookie-parser": "^1.4.6",
-    "swagger-ui-express": "^5.0.0",
-    "swagger-jsdoc": "^6.2.8",
-    "yamljs": "^0.3.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.2",
-    "eslint": "^8.56.0",
-    "prettier": "^3.1.1"
-  }
-}
-```
-
----
-
-## Variables de Entorno
-
-Crear archivo `.env` en la raíz del proyecto:
+Edita el archivo `.env` con tus credenciales:
 
 ```env
-# Server
+# Servidor
 NODE_ENV=development
 PORT=5000
 CLIENT_URL=http://localhost:5173
@@ -321,381 +153,390 @@ CLIENT_URL=http://localhost:5173
 MONGODB_URI=mongodb://localhost:27017/gemini-api
 
 # JWT
-JWT_SECRET=tu_super_secreto_largo_y_seguro_aqui_cambiar_en_produccion
+JWT_SECRET=tu_secreto_super_largo_y_aleatorio_minimo_32_caracteres
 JWT_EXPIRE=7d
-JWT_COOKIE_EXPIRE=7
 
 # Gemini API
-GEMINI_API_KEY=your_api_key_here
+GEMINI_API_KEY=tu_api_key_de_gemini
 GEMINI_MODEL=gemini-1.5-flash
-
-# File Upload
-MAX_FILE_SIZE=10485760
-ALLOWED_IMAGE_TYPES=image/jpeg,image/png,image/webp,image/gif
-ALLOWED_AUDIO_TYPES=audio/wav,audio/mpeg,audio/webm
-ALLOWED_PDF_TYPES=application/pdf
-
-# Rate Limiting
-RATE_LIMIT_WINDOW_MS=900000
-RATE_LIMIT_MAX_REQUESTS=100
-
-# Logging
-LOG_LEVEL=info
-
-# Bcrypt
-BCRYPT_ROUNDS=10
 
 # Swagger
 SWAGGER_ENABLED=true
 SWAGGER_PATH=/api/docs
 ```
 
----
+### Paso 4: Iniciar MongoDB
 
-## Scripts NPM
-
-```json
-{
-  "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js",
-    "lint": "eslint src/**/*.js",
-    "lint:fix": "eslint src/**/*.js --fix",
-    "format": "prettier --write \"src/**/*.js\"",
-    "swagger:generate": "node src/services/swagger/swaggerGenerator.service.js"
-  }
-}
-```
-
----
-
-## Instalación y Configuración
-
-### Paso 1: Clonar o crear el proyecto
+**Opción A: MongoDB Local**
 
 ```bash
-mkdir gemini-api-server
-cd gemini-api-server
+# Linux
+sudo systemctl start mongod
+
+# macOS
+brew services start mongodb-community
+
+# Windows
+net start MongoDB
 ```
 
-### Paso 2: Inicializar proyecto Node.js
+**Opción B: MongoDB Atlas**
 
-```bash
-npm init -y
-```
-
-### Paso 3: Instalar dependencias
-
-```bash
-# Dependencias de producción
-npm install @google/generative-ai express mongoose bcryptjs jsonwebtoken cors dotenv multer express-rate-limit helmet compression winston pdf-parse sharp express-validator cookie-parser swagger-ui-express swagger-jsdoc yamljs
-
-# Dependencias de desarrollo
-npm install -D nodemon eslint prettier
-```
-
-### Paso 4: Crear estructura de carpetas
-
-```bash
-# En Linux/Mac
-mkdir -p src/{config,decorators,controllers/{auth,gemini},services/{auth,gemini,processing,database,swagger,utils},middlewares/auth,routes/{auth,api},utils/{validators,helpers},models}
-mkdir -p uploads/{images,audio,pdfs}
-mkdir -p logs
-mkdir -p docs
-
-# En Windows (PowerShell)
-New-Item -ItemType Directory -Force -Path src/config,src/decorators,src/controllers/auth,src/controllers/gemini,src/services/auth,src/services/gemini,src/services/processing,src/services/database,src/services/swagger,src/services/utils,src/middlewares/auth,src/routes/auth,src/routes/api,src/utils/validators,src/utils/helpers,src/models,uploads/images,uploads/audio,uploads/pdfs,logs,docs
-```
-
-### Paso 5: Crear archivo .gitignore
-
-```bash
-# .gitignore
-node_modules/
-.env
-uploads/
-logs/
-*.log
-.DS_Store
-swagger.json
-```
-
-### Paso 6: Copiar .env.example a .env
-
-```bash
-cp .env.example .env
-```
-
-Editar `.env` con tus credenciales reales.
-
-### Paso 7: Configurar MongoDB
-
-#### Opción A: MongoDB Local
-
-```bash
-# Instalar MongoDB localmente
-# Linux (Ubuntu)
-sudo apt-get install mongodb
-
-# Mac
-brew install mongodb-community
-
-# Iniciar servicio
-sudo systemctl start mongodb  # Linux
-brew services start mongodb-community  # Mac
-```
-
-#### Opción B: MongoDB Atlas (Cloud)
-
-1. Crear cuenta en https://www.mongodb.com/cloud/atlas
+1. Crear cuenta en [MongoDB Atlas](https://www.mongodb.com/cloud/atlas)
 2. Crear cluster gratuito
-3. Crear usuario de base de datos
-4. Obtener connection string
-5. Actualizar `MONGODB_URI` en `.env`:
+3. Obtener connection string
+4. Actualizar `MONGODB_URI` en `.env`
 
-```env
-MONGODB_URI=mongodb+srv://usuario:password@cluster.mongodb.net/gemini-api?retryWrites=true&w=majority
-```
-
-### Paso 8: Obtener API Key de Gemini
-
-1. Ir a https://makersuite.google.com/app/apikey
-2. Crear API Key
-3. Copiar y pegar en `.env`:
-
-```env
-GEMINI_API_KEY=tu_api_key_aqui
-```
-
-### Paso 9: Configurar ESLint (Opcional)
+### Paso 5: Iniciar el Servidor
 
 ```bash
-npm init @eslint/config
-```
-
-Crear archivo `.eslintrc.json`:
-
-```json
-{
-  "env": {
-    "node": true,
-    "es2021": true
-  },
-  "extends": "eslint:recommended",
-  "parserOptions": {
-    "ecmaVersion": 12
-  },
-  "rules": {
-    "no-console": "off",
-    "no-unused-vars": "warn"
-  }
-}
-```
-
-### Paso 10: Configurar Prettier (Opcional)
-
-Crear archivo `.prettierrc`:
-
-```json
-{
-  "semi": true,
-  "trailingComma": "es5",
-  "singleQuote": true,
-  "printWidth": 100,
-  "tabWidth": 2
-}
-```
-
-### Paso 11: Configurar Nodemon
-
-Crear archivo `nodemon.json`:
-
-```json
-{
-  "watch": ["src"],
-  "ext": "js,json",
-  "ignore": ["src/**/*.test.js"],
-  "exec": "node server.js",
-  "env": {
-    "NODE_ENV": "development"
-  }
-}
-```
-
-### Paso 12: Crear archivo server.js
-
-```bash
-touch server.js
-```
-
-### Paso 13: Crear archivo app.js
-
-```bash
-touch src/app.js
-```
-
-### Paso 14: Iniciar el servidor
-
-```bash
-# Desarrollo
+# Desarrollo (con hot reload)
 npm run dev
 
 # Producción
 npm start
 ```
 
-### Paso 15: Verificar instalación
+El servidor estará disponible en: `http://localhost:5000`
 
-El servidor debería iniciar en `http://localhost:5000`
+## Funcionalidades Implementadas
 
-Endpoints disponibles:
-- `GET /health` - Verificar estado del servidor
-- `GET /api/docs` - Documentación Swagger UI
-- `POST /api/auth/register` - Registro de usuarios
-- `POST /api/auth/login` - Login de usuarios
+### 1. Autenticación y Usuarios
 
----
+- **Registro de usuarios** con validación de email único
+- **Login** con generación de JWT
+- **Logout** con invalidación de token
+- **Perfil de usuario** (lectura y actualización)
+- **Cambio de contraseña** seguro
+- **Encriptación bcrypt** (10 rounds)
+- **Tokens JWT** con expiración configurable
 
-## Flujo de Request Típico
+### 2. Integración Gemini AI
 
-### Con Autenticación:
+#### Consultas de Texto
+- Generación de texto con IA
+- Soporte para conversaciones contextuales
+- Ajuste de parámetros (temperature, maxTokens)
+
+#### Análisis de Imágenes
+- Upload de imágenes (JPEG, PNG, WebP, GIF)
+- Análisis visual con Gemini Vision
+- Redimensionamiento automático con Sharp
+- Validación de tipos MIME
+
+#### Transcripción de Voz
+- Soporte de formatos: WAV, MP3, WebM
+- Conversión de audio a texto
+- Procesamiento automático
+
+#### Análisis de PDFs
+- Extracción de texto de documentos
+- Análisis de contenido con IA
+- Validación de archivos
+
+#### Modo Multimodal
+- Combinación de texto + imágenes
+- Consultas complejas
+- Respuestas contextuales
+
+### 3. Gestión de Conversaciones
+
+- **CRUD completo** de conversaciones
+- **Historial persistente** en MongoDB
+- **Etiquetado** de conversaciones
+- **Contador de tokens** y costos estimados
+- **Paginación** de resultados
+- **Búsqueda** por título o tags
+
+### 4. Exportación de Datos
+
+- **Exportar a PDF** con formato profesional
+- **Exportar a TXT** simple
+- **Descarga directa** de archivos
+- **Limpieza automática** de exportaciones antiguas
+
+### 5. Seguridad
+
+- **Rate Limiting** por endpoint y usuario
+- **Helmet** para headers seguros
+- **CORS** configurado correctamente
+- **Validación** de inputs con express-validator
+- **Sanitización** de datos
+- **Manejo seguro** de archivos temporales
+
+### 6. Documentación API
+
+- **Swagger UI** interactivo en `/api/docs`
+- **Generación automática** desde JSDoc
+- **Testing en vivo** de endpoints
+- **Autenticación Bearer** integrada
+- **Ejemplos** de requests y responses
+
+### 7. Monitoreo y Logs
+
+- **Winston** para logging estructurado
+- **Logs por nivel** (error, warn, info)
+- **Rotación automática** de archivos
+- **Health checks** (`/health`, `/status`)
+- **Métricas** de memoria y CPU
+
+## Endpoints Principales
+
+### Autenticación
 
 ```
-Request → server.js → app.js → routes → authenticate middleware → controllers → services → response
+POST   /api/auth/register        - Registrar usuario
+POST   /api/auth/login           - Iniciar sesión
+POST   /api/auth/logout          - Cerrar sesión
+GET    /api/auth/profile         - Obtener perfil
+PUT    /api/auth/profile         - Actualizar perfil
+POST   /api/auth/change-password - Cambiar contraseña
+GET    /api/auth/me              - Usuario actual
 ```
 
-### Rutas Públicas:
+### Gemini AI
 
 ```
-POST /api/auth/register
-POST /api/auth/login
-GET /health
-GET /api/docs
+POST   /api/gemini/text         - Consulta de texto
+POST   /api/gemini/image        - Análisis de imagen
+POST   /api/gemini/voice        - Transcripción de voz
+POST   /api/gemini/pdf          - Análisis de PDF
+POST   /api/gemini/multimodal   - Consulta multimodal
 ```
 
-### Rutas Protegidas:
+### Conversaciones
 
 ```
-POST /api/gemini/text
-POST /api/gemini/image
-POST /api/gemini/voice
-POST /api/gemini/multimodal
-POST /api/gemini/pdf
-GET /api/conversations
-POST /api/conversations
-DELETE /api/conversations/:id
-GET /api/user/profile
-PUT /api/user/profile
-GET /api/export/:conversationId
-POST /api/auth/logout
+GET    /api/conversations       - Listar conversaciones
+POST   /api/conversations       - Crear conversación
+GET    /api/conversations/:id   - Obtener conversación
+PUT    /api/conversations/:id   - Actualizar conversación
+DELETE /api/conversations/:id   - Eliminar conversación
 ```
 
----
-
-## Sistema de Swagger Automático
-
-### Cómo funciona
-
-1. Las rutas incluyen comentarios JSDoc con anotaciones `@swagger`
-2. El servicio `swaggerGenerator.service.js` escanea todos los archivos en `src/routes/`
-3. Genera automáticamente la especificación OpenAPI 3.0
-4. Swagger UI se monta en `/api/docs`
-5. La especificación JSON se guarda en `swagger.json`
-
-### Acceder a la documentación
-
-Una vez iniciado el servidor:
+### Exportación
 
 ```
-http://localhost:5000/api/docs
+GET    /api/export/:id/pdf      - Exportar a PDF
+GET    /api/export/:id/txt      - Exportar a TXT
 ```
 
-### Regenerar documentación
+### Monitoreo
+
+```
+GET    /health                  - Estado del servidor
+GET    /status                  - Métricas detalladas
+GET    /api/docs                - Documentación Swagger
+```
+
+## Uso de la API
+
+### 1. Registrar Usuario
 
 ```bash
+curl -X POST http://localhost:5000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "johndoe",
+    "email": "john@example.com",
+    "password": "SecurePass123!"
+  }'
+```
+
+### 2. Iniciar Sesión
+
+```bash
+curl -X POST http://localhost:5000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "john@example.com",
+    "password": "SecurePass123!"
+  }'
+```
+
+Respuesta:
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "...",
+      "username": "johndoe",
+      "email": "john@example.com"
+    },
+    "token": "eyJhbGciOiJIUzI1NiIs..."
+  }
+}
+```
+
+### 3. Consultar a Gemini
+
+```bash
+curl -X POST http://localhost:5000/api/gemini/text \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Explica qué es la inteligencia artificial"
+  }'
+```
+
+### 4. Analizar Imagen
+
+```bash
+curl -X POST http://localhost:5000/api/gemini/image \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -F "image=@./foto.jpg" \
+  -F "prompt=Describe esta imagen en detalle"
+```
+
+## Scripts Disponibles
+
+```bash
+# Desarrollo con hot reload
+npm run dev
+
+# Producción
+npm start
+
+# Linting
+npm run lint
+npm run lint:fix
+
+# Formateo
+npm run format
+
+# Generar documentación Swagger
 npm run swagger:generate
 ```
 
----
+## Arquitectura y Decisiones de Diseño
 
-## Principios de Arquitectura
+### Patrón de Arquitectura
 
-### Separación de Responsabilidades
-- Controllers: Coordinan flujo (delgados)
-- Services: Contienen lógica de negocio (gruesos)
-- Routes: Solo definen endpoints
-- Middlewares: Tareas transversales
+El proyecto sigue una **arquitectura en capas**:
 
-### Modularidad
-Cada módulo es independiente y reutilizable.
+1. **Capa de Rutas**: Define endpoints y aplica middlewares
+2. **Capa de Controladores**: Coordina flujo de datos
+3. **Capa de Servicios**: Contiene lógica de negocio
+4. **Capa de Modelos**: Define esquemas de datos
+5. **Capa de Middlewares**: Funcionalidades transversales
 
-### Escalabilidad
-Fácil agregar nuevas features sin modificar código existente.
+### Principios Aplicados
 
-### Mantenibilidad
-Código organizado, fácil de entender y modificar.
+- **Separación de responsabilidades**: Cada módulo tiene una función específica
+- **DRY (Don't Repeat Yourself)**: Código reutilizable
+- **SOLID**: Principios de diseño orientado a objetos
+- **Modularidad**: Fácil agregar nuevas features
+- **Testabilidad**: Servicios fáciles de testear
 
-### Testeable
-Servicios y controladores fáciles de testear unitariamente.
+### Seguridad
 
----
-
-## Seguridad
-
-- JWT para autenticación stateless
-- Passwords hasheados con bcrypt (10+ rounds)
-- API Key en variables de entorno
-- Helmet para headers seguros
-- Rate limiting por usuario autenticado
+- Contraseñas hasheadas con bcrypt (10+ rounds)
+- Tokens JWT con expiración
+- Rate limiting por endpoint
 - Validación y sanitización de inputs
+- Headers seguros con Helmet
 - CORS configurado correctamente
-- Manejo seguro de archivos temporales
-- MongoDB con validaciones de schema
-- Tokens con expiración
-- Logout con invalidación de token
+
+### Performance
+
+- Compresión de respuestas con gzip
+- Pool de conexiones MongoDB
+- Limpieza automática de archivos temporales
+- Timeouts configurados
+- Manejo eficiente de streams
+
+## Testing
+
+Para probar los endpoints, puedes usar:
+
+1. **Swagger UI**: `http://localhost:5000/api/docs`
+2. **Postman**: Importar collection desde Swagger
+3. **cURL**: Ejemplos en la documentación
+4. **Thunder Client**: Extensión de VS Code
+
+## Deployment
+
+### Variables de Entorno en Producción
+
+```env
+NODE_ENV=production
+PORT=5000
+MONGODB_URI=mongodb+srv://...
+JWT_SECRET=cambiar_a_secreto_seguro
+GEMINI_API_KEY=tu_api_key
+SHOW_ERROR_STACK=false
+```
+
+### Plataformas Recomendadas
+
+- **Railway**: Deploy automático desde GitHub
+- **Render**: Free tier con MongoDB
+- **Heroku**: Fácil configuración
+- **AWS EC2**: Control completo
+- **DigitalOcean**: VPS económico
+
+### Checklist Pre-Deploy
+
+- [ ] Cambiar JWT_SECRET a valor aleatorio largo
+- [ ] Usar MongoDB Atlas o base de datos remota
+- [ ] Configurar CORS con dominios específicos
+- [ ] Establecer NODE_ENV=production
+- [ ] Deshabilitar logs detallados
+- [ ] Configurar rate limits estrictos
+- [ ] Backup de base de datos
+- [ ] Monitoreo configurado
+
+## Troubleshooting
+
+### Error: "connectDB is not a function"
+
+**Solución**: Verificar que en `server.js` se use destructuring:
+```javascript
+const { connectDB } = require('./src/config/database');
+```
+
+### Error: "Missing parameter name at index 1: *"
+
+**Solución**: Express 5 no soporta `app.use('*', ...)`. Usar `app.use((req, res) => ...)` sin asterisco.
+
+### Error: "option keepAlive is not supported"
+
+**Solución**: Mongoose 8 no soporta `keepAlive`. Actualizar `database.js` removiendo esas opciones.
+
+### MongoDB Connection Failed
+
+**Soluciones**:
+1. Verificar que MongoDB esté corriendo: `sudo systemctl status mongod`
+2. Revisar MONGODB_URI en `.env`
+3. Para Atlas, verificar whitelist de IPs
+
+## Contribuir
+
+1. Fork el proyecto
+2. Crea tu rama: `git checkout -b feature/AmazingFeature`
+3. Commit cambios: `git commit -m 'Add AmazingFeature'`
+4. Push a la rama: `git push origin feature/AmazingFeature`
+5. Abre un Pull Request
+
+## Licencia
+
+Este proyecto está bajo la Licencia MIT. Ver archivo `LICENSE` para más detalles.
+
+## Contacto
+
+AvalonTM - [@tu_twitter](https://twitter.com/tu_twitter) - tu.email@example.com
+
+Link del Proyecto: [https://github.com/avalontm/gemini-api-server](https://github.com/avalontm/gemini-api-server)
+
+## Agradecimientos
+
+- [Google Gemini AI](https://ai.google.dev/)
+- [Express.js](https://expressjs.com/)
+- [MongoDB](https://www.mongodb.com/)
+- [Node.js](https://nodejs.org/)
+- [Swagger](https://swagger.io/)
 
 ---
 
-## Próximos Pasos
-
-1. Implementar modelos de Mongoose
-2. Configurar conexión a MongoDB
-3. Implementar servicios de autenticación
-4. Crear middlewares de autenticación
-5. Implementar servicios de Gemini
-6. Crear controladores
-7. Definir rutas con JSDoc
-8. Implementar generador de Swagger
-9. Testing
-10. Documentación adicional
-
----
-
-## Notas Importantes
-
-### Seguridad:
-- NO subir API Key ni JWT_SECRET al repositorio
-- Usar JWT_SECRET largo y aleatorio en producción
-- Implementar refresh tokens para mayor seguridad
-- Considerar rate limiting agresivo para endpoints de auth
-- Hashear passwords con bcrypt rounds >= 10
-
-### Base de Datos:
-- Crear indexes en MongoDB: email (unique), userId en conversaciones
-- Validación a nivel de schema con Mongoose
-- Limpieza de archivos temporales periódicamente
-- Backup regular de MongoDB
-
-### Performance:
-- Implementar logs para debugging
-- Validar todas las entradas del usuario
-- Documentar cada endpoint con JSDoc
-- Usar async/await con try-catch
-- Implementar paginación en listado de conversaciones
-
-### Swagger:
-- Mantener comentarios JSDoc actualizados
-- Regenerar swagger.json después de cambios en rutas
-- Incluir ejemplos en la documentación
-- Documentar todos los códigos de error posibles
-- Usar schemas reutilizables en components/schemas
+Hecho con ❤️ por [AvalonTM](https://github.com/avalontm)

@@ -1,0 +1,8 @@
+# .gitignore
+node_modules/
+.env
+uploads/
+logs/
+*.log
+.DS_Store
+swagger.json
