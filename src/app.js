@@ -238,7 +238,7 @@ app.get('/', (req, res) => {
 });
 
 // MANEJO DE RUTAS NO ENCONTRADAS
-// CORREGIDO: Sin asterisco para Express 5
+
 app.use((req, res) => {
   res.status(404).json({
     success: false,

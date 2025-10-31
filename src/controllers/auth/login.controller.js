@@ -6,63 +6,6 @@ const userService = require('../../services/database/user.service');
 const sessionService = require('../../services/auth/session.service');
 const { validationResult } = require('express-validator');
 
-/**
- * @swagger
- * /api/auth/login:
- *   post:
- *     summary: Iniciar sesion
- *     tags: [Auth]
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - email
- *               - password
- *             properties:
- *               email:
- *                 type: string
- *                 format: email
- *                 example: john@example.com
- *               password:
- *                 type: string
- *                 format: password
- *                 example: Password123
- *     responses:
- *       200:
- *         description: Login exitoso
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: Login exitoso
- *                 data:
- *                   type: object
- *                   properties:
- *                     user:
- *                       type: object
- *                       properties:
- *                         id:
- *                           type: string
- *                         username:
- *                           type: string
- *                         email:
- *                           type: string
- *                     token:
- *                       type: string
- *       401:
- *         description: Credenciales invalidas
- *       500:
- *         description: Error del servidor
- */
 const login = async (req, res, next) => {
   try {
     const errors = validationResult(req);
@@ -76,7 +19,18 @@ const login = async (req, res, next) => {
 
     const { email, password } = req.body;
 
-    const user = await userService.findUserByEmail(email);
+
+    const User = require('../../models/User.model');
+    const user = await User.findOne({ email }).select('+password');
+    
+    // LOGS DE DIAGNOSTICO - TEMPORAL
+console.log('Usuario encontrado:', !!user);
+console.log('Email buscado:', email);
+console.log('Usuario en DB:', user ? user.email : 'No encontrado');
+console.log('Password en DB existe:', user ? !!user.password : 'N/A');
+console.log('Password recibido:', password);
+
+
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -88,6 +42,11 @@ const login = async (req, res, next) => {
       password,
       user.password
     );
+
+    console.log('Password válido:', isPasswordValid);
+console.log('Tipo de password recibido:', typeof password);
+console.log('Tipo de hash en BD:', typeof user.password);
+
 
     if (!isPasswordValid) {
       return res.status(401).json({

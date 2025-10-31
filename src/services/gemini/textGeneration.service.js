@@ -1,278 +1,201 @@
-// src/services/gemini/textGeneration.service.js
+// src/controllers/gemini/text.controller.js
 
-const geminiClient = require('./geminiClient.service');
-const conversationService = require('../database/conversation.service');
-const messageService = require('../database/message.service');
+const textGenerationService = require('../../services/gemini/textGeneration.service');
+const messageService = require('../../services/database/message.service');
+const conversationService = require('../../services/database/conversation.service');
+const geminiClient = require('../../services/gemini/geminiClient.service');
 
-class TextGenerationService {
-  /**
-   * Genera texto a partir de un prompt
-   * @param {Object} data - Datos de la generacion
-   * @param {string} data.prompt - Prompt de texto
-   * @param {string} data.userId - ID del usuario
-   * @param {string} data.conversationId - ID de conversacion (opcional)
-   * @param {Object} data.config - Configuracion opcional
-   * @returns {Promise<Object>} - Respuesta generada
-   */
-  async generateText(data) {
-    try {
-      const { prompt, userId, conversationId, config = {} } = data;
+/**
+ * Generar texto (respuesta completa)
+ */
+const generateText = async (req, res) => {
+  try {
+    const { prompt, conversationId, temperature, maxTokens } = req.body;
+    const userId = req.user.id;
 
-      if (!prompt || !userId) {
-        throw new Error('prompt y userId son requeridos');
-      }
-
-      let conversation;
-      if (conversationId) {
-        conversation = await conversationService.getConversationById(conversationId, userId);
-        if (!conversation) {
-          throw new Error('Conversacion no encontrada');
-        }
-      } else {
-        const title = this.generateTitle(prompt);
-        conversation = await conversationService.createConversation({
-          userId,
-          title,
-          tags: []
-        });
-      }
-
-      const userMessage = await messageService.createMessage({
-        conversationId: conversation._id,
-        role: 'user',
-        content: prompt,
-        type: 'text',
-        tokens: await geminiClient.countTokens(prompt)
+    if (!prompt) {
+      return res.status(400).json({
+        success: false,
+        message: 'El prompt es requerido'
       });
-
-      await conversationService.addMessageToConversation(
-        conversation._id,
-        userMessage._id
-      );
-
-      const result = await geminiClient.generateContent(prompt, config);
-
-      const assistantMessage = await messageService.createMessage({
-        conversationId: conversation._id,
-        role: 'assistant',
-        content: result.text,
-        type: 'text',
-        tokens: await geminiClient.countTokens(result.text)
-      });
-
-      await conversationService.addMessageToConversation(
-        conversation._id,
-        assistantMessage._id
-      );
-
-      const totalTokens = userMessage.tokens + assistantMessage.tokens;
-      await conversationService.updateTokenUsage(conversation._id, totalTokens);
-
-      return {
-        response: result.text,
-        conversationId: conversation._id,
-        messageId: assistantMessage._id,
-        tokens: {
-          prompt: userMessage.tokens,
-          completion: assistantMessage.tokens,
-          total: totalTokens
-        },
-        metadata: {
-          model: geminiClient.model,
-          temperature: config.temperature || 0.7,
-          timestamp: new Date()
-        }
-      };
-    } catch (error) {
-      throw new Error(`Error generando texto: ${error.message}`);
     }
+
+    textGenerationService.validatePromptLength(prompt);
+
+    const config = {
+      temperature: temperature || 0.7,
+      maxOutputTokens: maxTokens || 2048
+    };
+
+    const result = await textGenerationService.generateText({
+      prompt,
+      userId,
+      conversationId,
+      config
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Texto generado exitosamente',
+      data: result
+    });
+  } catch (error) {
+    console.error('Error en generateText:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error generando texto',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
+};
 
-  /**
-   * Genera texto con streaming
-   * @param {Object} data - Datos de la generacion
-   * @param {string} data.prompt - Prompt de texto
-   * @param {string} data.userId - ID del usuario
-   * @param {string} data.conversationId - ID de conversacion (opcional)
-   * @param {Object} data.config - Configuracion opcional
-   * @returns {Promise<Object>} - Stream de respuesta
-   */
-  async generateTextStream(data) {
-    try {
-      const { prompt, userId, conversationId, config = {} } = data;
+/**
+ * Generar texto con streaming (palabra por palabra)
+ */
+const generateTextStream = async (req, res) => {
+  try {
+    const { prompt, conversationId, temperature, maxTokens } = req.body;
+    const userId = req.user.id;
 
-      if (!prompt || !userId) {
-        throw new Error('prompt y userId son requeridos');
-      }
-
-      let conversation;
-      if (conversationId) {
-        conversation = await conversationService.getConversationById(conversationId, userId);
-        if (!conversation) {
-          throw new Error('Conversacion no encontrada');
-        }
-      } else {
-        const title = this.generateTitle(prompt);
-        conversation = await conversationService.createConversation({
-          userId,
-          title,
-          tags: []
-        });
-      }
-
-      const userMessage = await messageService.createMessage({
-        conversationId: conversation._id,
-        role: 'user',
-        content: prompt,
-        type: 'text',
-        tokens: await geminiClient.countTokens(prompt)
+    if (!prompt) {
+      return res.status(400).json({
+        success: false,
+        message: 'El prompt es requerido'
       });
-
-      await conversationService.addMessageToConversation(
-        conversation._id,
-        userMessage._id
-      );
-
-      const stream = await geminiClient.generateContentStream(prompt, config);
-
-      return {
-        stream,
-        conversationId: conversation._id,
-        userMessageId: userMessage._id,
-        metadata: {
-          model: geminiClient.model,
-          temperature: config.temperature || 0.7
-        }
-      };
-    } catch (error) {
-      throw new Error(`Error generando texto stream: ${error.message}`);
-    }
-  }
-
-  /**
-   * Continua una conversacion existente
-   * @param {Object} data - Datos de la continuacion
-   * @param {string} data.conversationId - ID de la conversacion
-   * @param {string} data.prompt - Nuevo prompt
-   * @param {string} data.userId - ID del usuario
-   * @param {Object} data.config - Configuracion opcional
-   * @returns {Promise<Object>} - Respuesta generada
-   */
-  async continueConversation(data) {
-    try {
-      const { conversationId, prompt, userId, config = {} } = data;
-
-      if (!conversationId || !prompt || !userId) {
-        throw new Error('conversationId, prompt y userId son requeridos');
-      }
-
-      const conversation = await conversationService.getConversationById(conversationId, userId);
-      if (!conversation) {
-        throw new Error('Conversacion no encontrada');
-      }
-
-      const messages = await messageService.getConversationMessages(conversationId);
-      
-      const history = messages.messages.map(msg => ({
-        role: msg.role,
-        parts: [{ text: msg.content }]
-      }));
-
-      const chat = geminiClient.startChat(history, config);
-      const result = await geminiClient.sendChatMessage(chat, prompt);
-
-      const userMessage = await messageService.createMessage({
-        conversationId,
-        role: 'user',
-        content: prompt,
-        type: 'text',
-        tokens: await geminiClient.countTokens(prompt)
-      });
-
-      await conversationService.addMessageToConversation(conversationId, userMessage._id);
-
-      const assistantMessage = await messageService.createMessage({
-        conversationId,
-        role: 'assistant',
-        content: result.text,
-        type: 'text',
-        tokens: await geminiClient.countTokens(result.text)
-      });
-
-      await conversationService.addMessageToConversation(conversationId, assistantMessage._id);
-
-      const totalTokens = userMessage.tokens + assistantMessage.tokens;
-      await conversationService.updateTokenUsage(conversationId, totalTokens);
-
-      return {
-        response: result.text,
-        conversationId,
-        messageId: assistantMessage._id,
-        tokens: {
-          prompt: userMessage.tokens,
-          completion: assistantMessage.tokens,
-          total: totalTokens
-        },
-        metadata: {
-          model: geminiClient.model,
-          messageCount: messages.messages.length + 2,
-          timestamp: new Date()
-        }
-      };
-    } catch (error) {
-      throw new Error(`Error continuando conversacion: ${error.message}`);
-    }
-  }
-
-  /**
-   * Genera un titulo basado en el prompt
-   * @param {string} prompt - Prompt original
-   * @returns {string} - Titulo generado
-   */
-  generateTitle(prompt) {
-    const maxLength = 50;
-    let title = prompt.trim();
-
-    if (title.length > maxLength) {
-      title = title.substring(0, maxLength) + '...';
     }
 
-    title = title.replace(/\n/g, ' ');
+    textGenerationService.validatePromptLength(prompt);
+
+    const config = {
+      temperature: temperature || 0.7,
+      maxOutputTokens: maxTokens || 2048
+    };
+
+    // Configurar headers para SSE (Server-Sent Events)
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // Para Nginx
+
+    // Iniciar el stream
+    const result = await textGenerationService.generateTextStream({
+      prompt,
+      userId,
+      conversationId,
+      config
+    });
+
+    const { stream, conversationId: convId, userMessageId, metadata } = result;
+
+    // Enviar metadata inicial
+    res.write(`data: ${JSON.stringify({
+      type: 'start',
+      conversationId: convId,
+      userMessageId,
+      metadata
+    })}\n\n`);
+
+    let fullText = '';
+
+    // Procesar el stream
+    for await (const chunk of stream.stream) {
+      const chunkText = chunk.text();
+      fullText += chunkText;
+
+      // Enviar cada chunk al cliente
+      res.write(`data: ${JSON.stringify({
+        type: 'chunk',
+        text: chunkText
+      })}\n\n`);
+    }
+
+    // Guardar el mensaje completo en la base de datos
+    const assistantMessage = await messageService.createMessage({
+      conversationId: convId,
+      role: 'assistant',
+      content: fullText,
+      type: 'text',
+      tokens: await geminiClient.countTokens(fullText)
+    });
+
+    await conversationService.addMessageToConversation(convId, assistantMessage._id);
+
+    const userMessage = await messageService.getMessageById(userMessageId);
+    const totalTokens = userMessage.tokens + assistantMessage.tokens;
+    await conversationService.updateTokenUsage(convId, totalTokens);
+
+    // Enviar mensaje final con metadata completa
+    res.write(`data: ${JSON.stringify({
+      type: 'end',
+      messageId: assistantMessage._id,
+      tokens: {
+        prompt: userMessage.tokens,
+        completion: assistantMessage.tokens,
+        total: totalTokens
+      },
+      fullText
+    })}\n\n`);
+
+    res.end();
+  } catch (error) {
+    console.error('Error en generateTextStream:', error);
     
-    return title || 'Nueva conversacion';
+    // Enviar error a través del stream
+    res.write(`data: ${JSON.stringify({
+      type: 'error',
+      message: error.message
+    })}\n\n`);
+    
+    res.end();
   }
+};
 
-  /**
-   * Valida la longitud del prompt
-   * @param {string} prompt - Prompt a validar
-   * @param {number} maxLength - Longitud maxima
-   * @returns {boolean} - true si es valido
-   */
-  validatePromptLength(prompt, maxLength = 10000) {
-    if (!prompt || typeof prompt !== 'string') {
-      throw new Error('Prompt invalido');
+/**
+ * Continuar conversación existente
+ */
+const continueConversation = async (req, res) => {
+  try {
+    const { conversationId, prompt, temperature, maxTokens } = req.body;
+    const userId = req.user.id;
+
+    if (!conversationId || !prompt) {
+      return res.status(400).json({
+        success: false,
+        message: 'conversationId y prompt son requeridos'
+      });
     }
 
-    if (prompt.length === 0) {
-      throw new Error('El prompt no puede estar vacio');
-    }
+    textGenerationService.validatePromptLength(prompt);
 
-    if (prompt.length > maxLength) {
-      throw new Error(`El prompt excede el limite de ${maxLength} caracteres`);
-    }
+    const config = {
+      temperature: temperature || 0.7,
+      maxOutputTokens: maxTokens || 2048
+    };
 
-    return true;
+    const result = await textGenerationService.continueConversation({
+      conversationId,
+      prompt,
+      userId,
+      config
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Conversacion continuada exitosamente',
+      data: result
+    });
+  } catch (error) {
+    console.error('Error en continueConversation:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error continuando conversacion',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
+};
 
-  /**
-   * Estima el costo de una generacion
-   * @param {number} tokens - Numero de tokens
-   * @returns {number} - Costo estimado en USD
-   */
-  estimateCost(tokens) {
-    const costPerToken = 0.00005;
-    return parseFloat((tokens * costPerToken).toFixed(4));
-  }
-}
-
-module.exports = new TextGenerationService();
+module.exports = {
+  generateText,
+  generateTextStream,
+  continueConversation
+};

@@ -32,10 +32,9 @@ const sessionService = require('../../services/auth/session.service');
 const logout = async (req, res, next) => {
   try {
     const token = req.token || req.cookies.token;
-    const userId = req.user.id;
 
     if (token) {
-      await sessionService.deleteSession(userId, token);
+      await sessionService.deleteSession(token);
     }
 
     res.clearCookie('token', {

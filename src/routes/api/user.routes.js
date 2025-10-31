@@ -3,128 +3,200 @@
 const express = require('express');
 const router = express.Router();
 
-// Middlewares - IMPORTACION CORRECTA CON DESTRUCTURING
 const { authenticate } = require('../../middlewares/auth/authenticate');
 const { asyncHandler } = require('../../middlewares/asyncHandler');
-const { body, validationResult } = require('express-validator');
+const { 
+  updateProfileValidation,
+  changePasswordValidation 
+} = require('../../middlewares/validation');
 
-// Middleware de validacion local
-const validate = (req, res, next) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({
-      success: false,
-      message: 'Error de validacion',
-      errors: errors.array().map(err => ({
-        field: err.path || err.param,
-        message: err.msg
-      }))
-    });
-  }
-  next();
-};
+const { 
+  getProfile, 
+  updateProfile, 
+  changePassword 
+} = require('../../controllers/auth/profile.controller');
 
-// Placeholder controllers (TEMPORALES - hasta crear user.controller.js)
-const getUserProfile = async (req, res) => {
-  res.status(501).json({ 
-    success: false,
-    message: 'GetUserProfile controller pendiente de implementacion',
-    userId: req.user ? req.user.id : 'N/A'
-  });
-};
-
-const updateUserProfile = async (req, res) => {
-  res.status(501).json({ 
-    success: false,
-    message: 'UpdateUserProfile controller pendiente de implementacion',
-    userId: req.user ? req.user.id : 'N/A',
-    data: req.body
-  });
-};
-
-const updateUserPreferences = async (req, res) => {
-  res.status(501).json({ 
-    success: false,
-    message: 'UpdateUserPreferences controller pendiente de implementacion',
-    userId: req.user ? req.user.id : 'N/A',
-    data: req.body
-  });
-};
-
-const getUserStats = async (req, res) => {
-  res.status(501).json({ 
-    success: false,
-    message: 'GetUserStats controller pendiente de implementacion',
-    userId: req.user ? req.user.id : 'N/A'
-  });
-};
+const userService = require('../../services/database/user.service');
 
 /**
  * @swagger
  * /api/user/profile:
  *   get:
- *     summary: Obtener perfil
+ *     summary: Obtener perfil del usuario autenticado
  *     tags: [User]
  *     security:
  *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Perfil obtenido exitosamente
+ *       401:
+ *         description: No autorizado
  */
 router.get(
   '/profile',
   authenticate,
-  asyncHandler(getUserProfile)
+  asyncHandler(getProfile)
 );
 
 /**
  * @swagger
  * /api/user/profile:
  *   put:
- *     summary: Actualizar perfil
+ *     summary: Actualizar perfil del usuario
  *     tags: [User]
  *     security:
  *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               username:
+ *                 type: string
+ *               avatar:
+ *                 type: string
+ *               preferences:
+ *                 type: object
+ *     responses:
+ *       200:
+ *         description: Perfil actualizado exitosamente
+ *       400:
+ *         description: Datos invalidos
+ *       401:
+ *         description: No autorizado
  */
 router.put(
   '/profile',
   authenticate,
-  body('username').optional().isString().trim().isLength({ min: 3, max: 30 }),
-  body('email').optional().isEmail().normalizeEmail(),
-  body('avatar').optional().isURL(),
-  validate,
-  asyncHandler(updateUserProfile)
+  updateProfileValidation,
+  asyncHandler(updateProfile)
+);
+
+/**
+ * @swagger
+ * /api/user/password:
+ *   put:
+ *     summary: Cambiar contrasena del usuario
+ *     tags: [User]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - currentPassword
+ *               - newPassword
+ *             properties:
+ *               currentPassword:
+ *                 type: string
+ *               newPassword:
+ *                 type: string
+ *               confirmPassword:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Contrasena actualizada exitosamente
+ *       400:
+ *         description: Contrasena actual incorrecta
+ *       401:
+ *         description: No autorizado
+ */
+router.put(
+  '/password',
+  authenticate,
+  changePasswordValidation,
+  asyncHandler(changePassword)
 );
 
 /**
  * @swagger
  * /api/user/preferences:
  *   put:
- *     summary: Actualizar preferencias
+ *     summary: Actualizar preferencias del usuario
  *     tags: [User]
  *     security:
  *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               theme:
+ *                 type: string
+ *                 enum: [light, dark, auto]
+ *               language:
+ *                 type: string
+ *                 enum: [es, en, fr, de, pt]
+ *     responses:
+ *       200:
+ *         description: Preferencias actualizadas exitosamente
+ *       401:
+ *         description: No autorizado
  */
 router.put(
   '/preferences',
   authenticate,
-  body('theme').optional().isIn(['light', 'dark', 'auto']),
-  body('language').optional().isIn(['es', 'en', 'fr', 'de', 'it', 'pt']),
-  body('notifications').optional().isBoolean(),
-  validate,
-  asyncHandler(updateUserPreferences)
+  asyncHandler(async (req, res, next) => {
+    try {
+      const userId = req.user.id;
+      const { theme, language } = req.body;
+
+      const preferences = {};
+      if (theme) preferences.theme = theme;
+      if (language) preferences.language = language;
+
+      const updatedUser = await userService.updateUserPreferences(userId, preferences);
+
+      res.status(200).json({
+        success: true,
+        message: 'Preferencias actualizadas exitosamente',
+        data: {
+          preferences: updatedUser.preferences
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  })
 );
 
 /**
  * @swagger
  * /api/user/stats:
  *   get:
- *     summary: Obtener estadisticas
+ *     summary: Obtener estadisticas del usuario
  *     tags: [User]
  *     security:
  *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Estadisticas obtenidas exitosamente
+ *       401:
+ *         description: No autorizado
  */
 router.get(
   '/stats',
   authenticate,
-  asyncHandler(getUserStats)
+  asyncHandler(async (req, res, next) => {
+    try {
+      const userId = req.user.id;
+      const stats = await userService.getUserStats(userId);
+
+      res.status(200).json({
+        success: true,
+        data: stats
+      });
+    } catch (error) {
+      next(error);
+    }
+  })
 );
 
 module.exports = router;

@@ -14,36 +14,11 @@ const { asyncHandler } = require('../../middlewares/asyncHandler');
 const { registerLimiter, authLimiter } = require('../../middlewares/rateLimiter');
 const { authAttemptLogger } = require('../../middlewares/requestLogger');
 
-// Controllers (se importaran cuando se creen)
-// const { register } = require('../../controllers/auth/register.controller');
-// const { login } = require('../../controllers/auth/login.controller');
-// const { logout } = require('../../controllers/auth/logout.controller');
-// const { getProfile, updateProfile } = require('../../controllers/auth/profile.controller');
-
-// Placeholder controllers (reemplazar cuando se creen los reales)
-const register = (req, res) => {
-  res.status(501).json({ message: 'Register controller pendiente de implementacion' });
-};
-
-const login = (req, res) => {
-  res.status(501).json({ message: 'Login controller pendiente de implementacion' });
-};
-
-const logout = (req, res) => {
-  res.status(501).json({ message: 'Logout controller pendiente de implementacion' });
-};
-
-const getProfile = (req, res) => {
-  res.status(501).json({ message: 'GetProfile controller pendiente de implementacion' });
-};
-
-const updateProfile = (req, res) => {
-  res.status(501).json({ message: 'UpdateProfile controller pendiente de implementacion' });
-};
-
-const changePassword = (req, res) => {
-  res.status(501).json({ message: 'ChangePassword controller pendiente de implementacion' });
-};
+// Controllers
+const { register } = require('../../controllers/auth/register.controller');
+const { login } = require('../../controllers/auth/login.controller');
+const { logout, logoutAll } = require('../../controllers/auth/logout.controller');
+const { getProfile, updateProfile, changePassword } = require('../../controllers/auth/profile.controller');
 
 /**
  * @swagger
@@ -194,6 +169,36 @@ router.post(
 
 /**
  * @swagger
+ * /api/auth/logout-all:
+ *   post:
+ *     summary: Cerrar todas las sesiones
+ *     description: Cierra todas las sesiones activas del usuario autenticado
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Todas las sesiones cerradas exitosamente
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *       401:
+ *         description: No autorizado
+ */
+router.post(
+  '/logout-all',
+  authenticate,
+  asyncHandler(logoutAll)
+);
+
+/**
+ * @swagger
  * /api/auth/profile:
  *   get:
  *     summary: Obtener perfil del usuario
@@ -244,12 +249,18 @@ router.get(
  *               username:
  *                 type: string
  *                 example: johndoe
- *               email:
- *                 type: string
- *                 example: john@example.com
  *               avatar:
  *                 type: string
  *                 example: https://example.com/avatar.jpg
+ *               preferences:
+ *                 type: object
+ *                 properties:
+ *                   theme:
+ *                     type: string
+ *                     example: dark
+ *                   language:
+ *                     type: string
+ *                     example: es
  *     responses:
  *       200:
  *         description: Perfil actualizado exitosamente
@@ -291,24 +302,21 @@ router.put(
  *             required:
  *               - currentPassword
  *               - newPassword
- *               - confirmPassword
  *             properties:
  *               currentPassword:
  *                 type: string
  *                 example: OldPass123!
  *               newPassword:
  *                 type: string
- *                 example: NewPass123!
- *               confirmPassword:
- *                 type: string
+ *                 minLength: 8
  *                 example: NewPass123!
  *     responses:
  *       200:
  *         description: Contrasena cambiada exitosamente
  *       400:
- *         description: Error de validacion
+ *         description: Error de validacion o contrasena incorrecta
  *       401:
- *         description: Contrasena actual incorrecta
+ *         description: No autorizado
  */
 router.post(
   '/change-password',

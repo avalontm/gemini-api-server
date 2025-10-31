@@ -4,40 +4,11 @@ const userService = require('../../services/database/user.service');
 const passwordService = require('../../services/auth/password.service');
 const { validationResult } = require('express-validator');
 
-/**
- * @swagger
- * /api/user/profile:
- *   get:
- *     summary: Obtener perfil del usuario autenticado
- *     tags: [User]
- *     security:
- *       - bearerAuth: []
- *     responses:
- *       200:
- *         description: Perfil obtenido exitosamente
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 data:
- *                   type: object
- *                   properties:
- *                     user:
- *                       type: object
- *       401:
- *         description: No autorizado
- *       500:
- *         description: Error del servidor
- */
 const getProfile = async (req, res, next) => {
   try {
     const userId = req.user.id;
 
-    const user = await userService.findUserById(userId);
+    const user = await userService.getUserById(userId);
 
     if (!user) {
       return res.status(404).json({
@@ -45,8 +16,6 @@ const getProfile = async (req, res, next) => {
         message: 'Usuario no encontrado'
       });
     }
-
-    user.password = undefined;
 
     res.status(200).json({
       success: true,
@@ -68,46 +37,6 @@ const getProfile = async (req, res, next) => {
   }
 };
 
-/**
- * @swagger
- * /api/user/profile:
- *   put:
- *     summary: Actualizar perfil del usuario
- *     tags: [User]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               username:
- *                 type: string
- *                 example: newusername
- *               avatar:
- *                 type: string
- *                 example: https://example.com/avatar.jpg
- *               preferences:
- *                 type: object
- *                 properties:
- *                   theme:
- *                     type: string
- *                     example: dark
- *                   language:
- *                     type: string
- *                     example: es
- *     responses:
- *       200:
- *         description: Perfil actualizado exitosamente
- *       400:
- *         description: Datos invalidos
- *       401:
- *         description: No autorizado
- *       500:
- *         description: Error del servidor
- */
 const updateProfile = async (req, res, next) => {
   try {
     const errors = validationResult(req);
@@ -125,7 +54,7 @@ const updateProfile = async (req, res, next) => {
     const updateData = {};
 
     if (username) {
-      const existingUsername = await userService.findUserByUsername(username);
+      const existingUsername = await userService.getUserByUsername(username);
       if (existingUsername && existingUsername._id.toString() !== userId) {
         return res.status(400).json({
           success: false,
@@ -152,8 +81,6 @@ const updateProfile = async (req, res, next) => {
       });
     }
 
-    updatedUser.password = undefined;
-
     res.status(200).json({
       success: true,
       message: 'Perfil actualizado exitosamente',
@@ -174,43 +101,6 @@ const updateProfile = async (req, res, next) => {
   }
 };
 
-/**
- * @swagger
- * /api/user/password:
- *   put:
- *     summary: Cambiar contrasena del usuario
- *     tags: [User]
- *     security:
- *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - currentPassword
- *               - newPassword
- *             properties:
- *               currentPassword:
- *                 type: string
- *                 format: password
- *                 example: OldPassword123
- *               newPassword:
- *                 type: string
- *                 format: password
- *                 minLength: 6
- *                 example: NewPassword123
- *     responses:
- *       200:
- *         description: Contrasena actualizada exitosamente
- *       400:
- *         description: Contrasena actual incorrecta
- *       401:
- *         description: No autorizado
- *       500:
- *         description: Error del servidor
- */
 const changePassword = async (req, res, next) => {
   try {
     const errors = validationResult(req);
@@ -225,7 +115,8 @@ const changePassword = async (req, res, next) => {
     const userId = req.user.id;
     const { currentPassword, newPassword } = req.body;
 
-    const user = await userService.findUserById(userId);
+    const User = require('../../models/User.model');
+    const user = await User.findById(userId).select('+password');
 
     if (!user) {
       return res.status(404).json({
@@ -246,9 +137,8 @@ const changePassword = async (req, res, next) => {
       });
     }
 
-    const hashedPassword = await passwordService.hashPassword(newPassword);
-
-    await userService.updateUser(userId, { password: hashedPassword });
+    user.password = newPassword;
+    await user.save();
 
     res.status(200).json({
       success: true,

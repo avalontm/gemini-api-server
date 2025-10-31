@@ -81,7 +81,7 @@ const register = async (req, res, next) => {
 
     const { username, email, password } = req.body;
 
-    const existingUser = await userService.findUserByEmail(email);
+    const existingUser = await userService.getUserByEmail(email);
     if (existingUser) {
       return res.status(400).json({
         success: false,
@@ -89,7 +89,7 @@ const register = async (req, res, next) => {
       });
     }
 
-    const existingUsername = await userService.findUserByUsername(username);
+    const existingUsername = await userService.getUserByUsername(username);
     if (existingUsername) {
       return res.status(400).json({
         success: false,
@@ -102,7 +102,7 @@ const register = async (req, res, next) => {
     const newUser = await userService.createUser({
       username,
       email,
-      password: hashedPassword
+      password: password
     });
 
     const token = tokenService.generateToken({

@@ -5,7 +5,9 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 class GeminiClientService {
   constructor() {
     this.apiKey = process.env.GEMINI_API_KEY;
-    this.model = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+    // IMPORTANTE: Usar modelos Gemini 2.x (los 1.5 fueron retirados)
+    // Opciones válidas: gemini-2.0-flash, gemini-2.5-flash, gemini-2.5-flash-lite
+    this.model = process.env.GEMINI_MODEL || 'gemini-2.0-flash-exp';
     
     if (!this.apiKey) {
       throw new Error('GEMINI_API_KEY no esta configurada en las variables de entorno');
@@ -63,7 +65,7 @@ class GeminiClientService {
    * @returns {Object} - Modelo generativo
    */
   getModel(config = {}) {
-    if (!this.generativeModel) {
+    if (!this.generativeModel || Object.keys(config).length > 0) {
       return this.initializeModel(config);
     }
     return this.generativeModel;
@@ -195,22 +197,66 @@ class GeminiClientService {
   }
 
   /**
-   * Cuenta tokens de un prompt
+   * Cuenta tokens de un prompt (con fallback a estimacion)
    * @param {string|Array} content - Contenido a contar
    * @returns {Promise<number>} - Numero de tokens
    */
   async countTokens(content) {
     try {
       if (!content) {
-        throw new Error('Content es requerido');
+        return 0;
       }
 
-      const model = this.getModel();
-      const result = await model.countTokens(content);
-
-      return result.totalTokens;
+      // Intentar usar la API de countTokens
+      try {
+        const model = this.getModel();
+        const result = await model.countTokens(content);
+        return result.totalTokens;
+      } catch (apiError) {
+        // Si falla la API, usar estimacion
+        console.warn('countTokens API no disponible, usando estimación');
+        return this.estimateTokens(content);
+      }
     } catch (error) {
-      throw new Error(`Error contando tokens: ${error.message}`);
+      // Fallback final: estimacion
+      console.error('Error en countTokens, usando estimación:', error.message);
+      return this.estimateTokens(content);
+    }
+  }
+
+  /**
+   * Estima tokens basado en caracteres
+   * Regla general: ~4 caracteres = 1 token para ingles
+   * Para español: ~5-6 caracteres = 1 token
+   * @param {string|Array} content - Contenido a estimar
+   * @returns {number} - Numero estimado de tokens
+   */
+  estimateTokens(content) {
+    try {
+      if (!content) {
+        return 0;
+      }
+
+      let text = '';
+      
+      if (typeof content === 'string') {
+        text = content;
+      } else if (Array.isArray(content)) {
+        text = content.map(part => {
+          if (typeof part === 'string') return part;
+          if (part.text) return part.text;
+          return '';
+        }).join(' ');
+      }
+
+      // Estimacion conservadora: 5 caracteres por token (para español)
+      const estimatedTokens = Math.ceil(text.length / 5);
+      
+      // Agregar overhead minimo de 10 tokens por mensaje
+      return estimatedTokens + 10;
+    } catch (error) {
+      console.error('Error estimando tokens:', error.message);
+      return 100; // Valor por defecto seguro
     }
   }
 
