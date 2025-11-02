@@ -102,6 +102,10 @@ conversationSchema.index({ tags: 1 });
  * Virtual para obtener numero de mensajes
  */
 conversationSchema.virtual('messagesCount').get(function () {
+  // Si messages no está definido o no es un array, retornar messageCount del schema
+  if (!this.messages || !Array.isArray(this.messages)) {
+    return this.messageCount || 0;
+  }
   return this.messages.length;
 });
 

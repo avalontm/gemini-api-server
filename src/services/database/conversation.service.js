@@ -28,10 +28,14 @@ class ConversationService {
         tokenUsage: {
           total: 0,
           estimatedCost: 0
-        }
+        },
+        isArchived: false,
+        isPinned: false,
+        lastMessageAt: new Date(),
+        messageCount: 0
       });
 
-      return conversation;
+      return conversation.toObject();
     } catch (error) {
       throw new Error(`Error creando conversacion: ${error.message}`);
     }
@@ -52,7 +56,13 @@ class ConversationService {
       const conversation = await Conversation.findOne({
         _id: conversationId,
         userId
-      }).populate('messages');
+      }).lean();
+
+      if (!conversation) {
+        return null;
+      }
+
+      conversation.id = conversation._id.toString();
 
       return conversation;
     } catch (error) {
@@ -61,7 +71,7 @@ class ConversationService {
   }
 
   /**
-   * Obtiene todas las conversaciones de un usuario
+   * Obtiene todas las conversaciones de un usuario con el ultimo mensaje
    * @param {string} userId - ID del usuario
    * @param {Object} options - Opciones de paginacion y busqueda
    * @returns {Promise<Object>} - Conversaciones paginadas
@@ -73,7 +83,7 @@ class ConversationService {
       }
 
       const page = parseInt(options.page) || 1;
-      const limit = parseInt(options.limit) || 10;
+      const limit = parseInt(options.limit) || 50;
       const skip = (page - 1) * limit;
       const search = options.search || '';
 
@@ -86,22 +96,58 @@ class ConversationService {
         ];
       }
 
+      // Obtener conversaciones
       const conversations = await Conversation.find(query)
-        .sort({ updatedAt: -1 })
+        .sort({ isPinned: -1, lastMessageAt: -1 })
         .skip(skip)
         .limit(limit)
-        .select('-messages');
+        .select('-messages')
+        .lean();
+
+      // Para cada conversacion, obtener el ultimo mensaje
+      const conversationsWithLastMessage = await Promise.all(
+        conversations.map(async (conv) => {
+          const lastMessage = await Message.findOne({ 
+            conversationId: conv._id 
+          })
+            .sort({ createdAt: -1 })
+            .select('content role createdAt')
+            .lean();
+
+          let lastMessagePreview = 'Sin mensajes';
+          
+          if (lastMessage) {
+            // Limitar a 60 caracteres
+            const content = lastMessage.content || '';
+            lastMessagePreview = content.length > 60 
+              ? content.substring(0, 60) + '...'
+              : content;
+          }
+
+          return {
+            ...conv,
+            id: conv._id.toString(),
+            lastMessage: lastMessagePreview,
+            lastMessageRole: lastMessage?.role || null
+          };
+        })
+      );
 
       const total = await Conversation.countDocuments(query);
 
       return {
-        conversations,
+        conversations: conversationsWithLastMessage,
         pagination: {
           total,
           page,
           limit,
           pages: Math.ceil(total / limit)
-        }
+        },
+        currentPage: page,
+        totalPages: Math.ceil(total / limit),
+        totalConversations: total,
+        hasNext: page < Math.ceil(total / limit),
+        hasPrev: page > 1
       };
     } catch (error) {
       throw new Error(`Error obteniendo conversaciones: ${error.message}`);
@@ -113,7 +159,7 @@ class ConversationService {
    * @param {string} conversationId - ID de la conversacion
    * @param {string} userId - ID del usuario
    * @param {Object} updates - Datos a actualizar
-   * @returns {Promise<Object>} - Conversacion actualizada
+   * @returns {Promise<Object|null>} - Conversacion actualizada
    */
   async updateConversation(conversationId, userId, updates) {
     try {
@@ -121,23 +167,39 @@ class ConversationService {
         throw new Error('conversationId y userId son requeridos');
       }
 
-      const allowedUpdates = ['title', 'tags'];
-      const updateKeys = Object.keys(updates);
-      const isValidUpdate = updateKeys.every(key => allowedUpdates.includes(key));
+      const allowedUpdates = [
+        'title', 
+        'tags', 
+        'isArchived', 
+        'isPinned', 
+        'lastMessage',
+        'lastMessageAt',
+        'updatedAt'
+      ];
+      
+      const updateData = {};
 
-      if (!isValidUpdate) {
-        throw new Error('Actualizaciones no permitidas');
+      for (const key of Object.keys(updates)) {
+        if (allowedUpdates.includes(key)) {
+          updateData[key] = updates[key];
+        }
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        throw new Error('No hay campos válidos para actualizar');
       }
 
       const conversation = await Conversation.findOneAndUpdate(
         { _id: conversationId, userId },
-        { $set: updates },
+        { $set: updateData },
         { new: true, runValidators: true }
-      );
+      ).lean();
 
       if (!conversation) {
-        throw new Error('Conversacion no encontrada');
+        return null;
       }
+
+      conversation.id = conversation._id.toString();
 
       return conversation;
     } catch (error) {
@@ -186,15 +248,20 @@ class ConversationService {
         conversationId,
         { 
           $push: { messages: messageId },
-          $set: { updatedAt: new Date() }
+          $set: { 
+            updatedAt: new Date(),
+            lastMessageAt: new Date()
+          },
+          $inc: { messageCount: 1 }
         },
         { new: true }
-      );
+      ).lean();
 
       if (!conversation) {
         throw new Error('Conversacion no encontrada');
       }
 
+      conversation.id = conversation._id.toString();
       return conversation;
     } catch (error) {
       throw new Error(`Error agregando mensaje: ${error.message}`);
@@ -229,7 +296,10 @@ class ConversationService {
 
       await conversation.save();
 
-      return conversation;
+      const result = conversation.toObject();
+      result.id = result._id.toString();
+      
+      return result;
     } catch (error) {
       throw new Error(`Error actualizando tokens: ${error.message}`);
     }
@@ -246,7 +316,7 @@ class ConversationService {
         throw new Error('conversationId es requerido');
       }
 
-      const conversation = await Conversation.findById(conversationId);
+      const conversation = await Conversation.findById(conversationId).lean();
 
       if (!conversation) {
         throw new Error('Conversacion no encontrada');
@@ -254,7 +324,7 @@ class ConversationService {
 
       const messageCount = await Message.countDocuments({ conversationId });
 
-      const messages = await Message.find({ conversationId });
+      const messages = await Message.find({ conversationId }).lean();
       const userMessages = messages.filter(m => m.role === 'user').length;
       const assistantMessages = messages.filter(m => m.role === 'assistant').length;
 
@@ -268,6 +338,53 @@ class ConversationService {
       };
     } catch (error) {
       throw new Error(`Error obteniendo estadisticas: ${error.message}`);
+    }
+  }
+
+  /**
+   * Busca conversaciones por texto
+   * @param {string} userId - ID del usuario
+   * @param {string} searchTerm - Termino de busqueda
+   * @returns {Promise<Array>} - Conversaciones encontradas
+   */
+  async searchConversations(userId, searchTerm) {
+    try {
+      if (!userId || !searchTerm) {
+        throw new Error('userId y searchTerm son requeridos');
+      }
+
+      const conversations = await Conversation.find({
+        userId,
+        $or: [
+          { title: { $regex: searchTerm, $options: 'i' } },
+          { tags: { $regex: searchTerm, $options: 'i' } }
+        ]
+      })
+        .sort({ lastMessageAt: -1 })
+        .limit(20)
+        .lean();
+
+      // Agregar ultimo mensaje a cada conversacion
+      const conversationsWithLastMessage = await Promise.all(
+        conversations.map(async (conv) => {
+          const lastMessage = await Message.findOne({ 
+            conversationId: conv._id 
+          })
+            .sort({ createdAt: -1 })
+            .select('content')
+            .lean();
+
+          return {
+            ...conv,
+            id: conv._id.toString(),
+            lastMessage: lastMessage?.content?.substring(0, 60) + '...' || 'Sin mensajes'
+          };
+        })
+      );
+
+      return conversationsWithLastMessage;
+    } catch (error) {
+      throw new Error(`Error buscando conversaciones: ${error.message}`);
     }
   }
 
@@ -286,9 +403,14 @@ class ConversationService {
       const conversations = await Conversation.find({
         userId,
         tags: { $in: tags }
-      }).sort({ updatedAt: -1 });
+      })
+      .sort({ updatedAt: -1 })
+      .lean();
 
-      return conversations;
+      return conversations.map(conv => ({
+        ...conv,
+        id: conv._id.toString()
+      }));
     } catch (error) {
       throw new Error(`Error buscando por tags: ${error.message}`);
     }
@@ -325,11 +447,15 @@ class ConversationService {
       }
 
       const conversations = await Conversation.find({ userId })
-        .sort({ updatedAt: -1 })
+        .sort({ lastMessageAt: -1 })
         .limit(limit)
-        .select('-messages');
+        .select('-messages')
+        .lean();
 
-      return conversations;
+      return conversations.map(conv => ({
+        ...conv,
+        id: conv._id.toString()
+      }));
     } catch (error) {
       throw new Error(`Error obteniendo conversaciones recientes: ${error.message}`);
     }

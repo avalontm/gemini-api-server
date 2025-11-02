@@ -108,6 +108,28 @@ class MessageService {
   }
 
   /**
+   * Obtiene todos los mensajes de una conversacion (sin paginacion)
+   * Alias para compatibilidad con el controlador
+   * @param {string} conversationId - ID de la conversacion
+   * @returns {Promise<Array>} - Array de mensajes
+   */
+  async getMessagesByConversation(conversationId) {
+    try {
+      if (!conversationId) {
+        throw new Error('conversationId es requerido');
+      }
+
+      const messages = await Message.find({ conversationId })
+        .sort({ createdAt: 1 })
+        .lean();
+
+      return messages;
+    } catch (error) {
+      throw new Error(`Error obteniendo mensajes: ${error.message}`);
+    }
+  }
+
+  /**
    * Actualiza un mensaje
    * @param {string} messageId - ID del mensaje
    * @param {Object} updates - Datos a actualizar
@@ -177,6 +199,15 @@ class MessageService {
     } catch (error) {
       throw new Error(`Error eliminando mensajes: ${error.message}`);
     }
+  }
+
+  /**
+   * Alias para deleteConversationMessages (compatibilidad)
+   * @param {string} conversationId - ID de la conversacion
+   * @returns {Promise<number>} - Numero de mensajes eliminados
+   */
+  async deleteMessagesByConversation(conversationId) {
+    return this.deleteConversationMessages(conversationId);
   }
 
   /**

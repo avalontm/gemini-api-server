@@ -3,7 +3,7 @@
 const express = require('express');
 const router = express.Router();
 
-// Middlewares - IMPORTACION CORRECTA CON DESTRUCTURING
+// Middlewares 
 const { authenticate } = require('../../middlewares/auth/authenticate');
 const { asyncHandler } = require('../../middlewares/asyncHandler');
 const { body, param, query, validationResult } = require('express-validator');
