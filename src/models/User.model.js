@@ -16,7 +16,7 @@ const userSchema = new mongoose.Schema(
       trim: true,
       minlength: [3, 'El nombre de usuario debe tener al menos 3 caracteres'],
       maxlength: [30, 'El nombre de usuario no puede exceder 30 caracteres'],
-      match: [REGEX_PATTERNS.USERNAME, 'El nombre de usuario solo puede contener letras, numeros, guiones y guiones bajos'],
+      match: [/^[a-zA-Z0-9_\-\s]+$/, 'El nombre de usuario solo puede contener letras, numeros, espacios, guiones y guiones bajos'],
       index: true,
     },
     
@@ -41,6 +41,15 @@ const userSchema = new mongoose.Schema(
     avatar: {
       type: String,
       default: null,
+      // Permitir hasta 5MB para base64 (aproximadamente)
+      maxlength: [5000000, 'El avatar es demasiado grande'],
+    },
+    
+    bio: {
+      type: String,
+      default: '',
+      maxlength: [500, 'La biografia no puede exceder 500 caracteres'],
+      trim: true,
     },
     
     role: {
@@ -130,8 +139,6 @@ userSchema.pre('save', async function (next) {
 
 /**
  * Metodo de instancia: comparar password
- * @param {string} enteredPassword - Password ingresado
- * @returns {Promise<boolean>} - True si coincide
  */
 userSchema.methods.comparePassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
@@ -139,7 +146,6 @@ userSchema.methods.comparePassword = async function (enteredPassword) {
 
 /**
  * Metodo de instancia: obtener objeto publico del usuario
- * @returns {Object} - Usuario sin datos sensibles
  */
 userSchema.methods.toPublicJSON = function () {
   return {
@@ -147,6 +153,7 @@ userSchema.methods.toPublicJSON = function () {
     username: this.username,
     email: this.email,
     avatar: this.avatar,
+    bio: this.bio,
     role: this.role,
     preferences: this.preferences,
     isActive: this.isActive,
@@ -159,8 +166,6 @@ userSchema.methods.toPublicJSON = function () {
 
 /**
  * Metodo estatico: buscar usuario por email
- * @param {string} email - Email del usuario
- * @returns {Promise<Object>} - Usuario encontrado
  */
 userSchema.statics.findByEmail = function (email) {
   return this.findOne({ email: email.toLowerCase() }).select('+password');
@@ -168,8 +173,6 @@ userSchema.statics.findByEmail = function (email) {
 
 /**
  * Metodo estatico: buscar usuario por username
- * @param {string} username - Username del usuario
- * @returns {Promise<Object>} - Usuario encontrado
  */
 userSchema.statics.findByUsername = function (username) {
   return this.findOne({ username: username }).select('+password');
@@ -177,8 +180,6 @@ userSchema.statics.findByUsername = function (username) {
 
 /**
  * Metodo estatico: verificar si email existe
- * @param {string} email - Email a verificar
- * @returns {Promise<boolean>} - True si existe
  */
 userSchema.statics.emailExists = async function (email) {
   const user = await this.findOne({ email: email.toLowerCase() });
@@ -187,8 +188,6 @@ userSchema.statics.emailExists = async function (email) {
 
 /**
  * Metodo estatico: verificar si username existe
- * @param {string} username - Username a verificar
- * @returns {Promise<boolean>} - True si existe
  */
 userSchema.statics.usernameExists = async function (username) {
   const user = await this.findOne({ username: username });

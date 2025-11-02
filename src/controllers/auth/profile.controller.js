@@ -7,7 +7,6 @@ const { validationResult } = require('express-validator');
 const getProfile = async (req, res, next) => {
   try {
     const userId = req.user.id;
-
     const user = await userService.getUserById(userId);
 
     if (!user) {
@@ -25,6 +24,7 @@ const getProfile = async (req, res, next) => {
           username: user.username,
           email: user.email,
           avatar: user.avatar,
+          bio: user.bio || '',
           role: user.role,
           preferences: user.preferences,
           createdAt: user.createdAt,
@@ -39,8 +39,16 @@ const getProfile = async (req, res, next) => {
 
 const updateProfile = async (req, res, next) => {
   try {
+    // Verificar errores de validacion
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
+      console.log('ERRORES DE VALIDACION DETECTADOS:');
+      errors.array().forEach((err, idx) => {
+        console.log(`  ${idx + 1}. Campo: ${err.path || err.param}`);
+        console.log(`     Mensaje: ${err.msg}`);
+        console.log(`     Valor: ${typeof err.value === 'string' && err.value.length > 100 ? err.value.substring(0, 100) + '...' : err.value}`);
+      });
+      
       return res.status(400).json({
         success: false,
         message: 'Errores de validacion',
@@ -49,11 +57,20 @@ const updateProfile = async (req, res, next) => {
     }
 
     const userId = req.user.id;
-    const { username, avatar, preferences } = req.body;
+    const { username, avatar, bio, preferences } = req.body;
+
+    // Verificar que no se intente cambiar el email
+    if (req.body.email !== undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'El email no se puede modificar'
+      });
+    }
 
     const updateData = {};
 
-    if (username) {
+    // Validar y actualizar username si se proporciona
+    if (username !== undefined) {
       const existingUsername = await userService.getUserByUsername(username);
       if (existingUsername && existingUsername._id.toString() !== userId) {
         return res.status(400).json({
@@ -64,14 +81,37 @@ const updateProfile = async (req, res, next) => {
       updateData.username = username;
     }
 
+    // Actualizar avatar si se proporciona
     if (avatar !== undefined) {
-      updateData.avatar = avatar;
+      if (avatar === '' || avatar === null) {
+        updateData.avatar = null;
+      } else if (typeof avatar === 'string' && avatar.startsWith('data:image/')) {
+        updateData.avatar = avatar;
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: 'Formato de avatar invalido'
+        });
+      }
     }
 
-    if (preferences) {
+    // Actualizar bio si se proporciona
+    if (bio !== undefined) {
+      if (bio.length > 500) {
+        return res.status(400).json({
+          success: false,
+          message: 'La biografia no puede exceder 500 caracteres'
+        });
+      }
+      updateData.bio = bio;
+    }
+
+    // Actualizar preferencias si se proporcionan
+    if (preferences !== undefined) {
       updateData.preferences = preferences;
     }
 
+    // Actualizar usuario
     const updatedUser = await userService.updateUser(userId, updateData);
 
     if (!updatedUser) {
@@ -90,6 +130,7 @@ const updateProfile = async (req, res, next) => {
           username: updatedUser.username,
           email: updatedUser.email,
           avatar: updatedUser.avatar,
+          bio: updatedUser.bio || '',
           role: updatedUser.role,
           preferences: updatedUser.preferences,
           updatedAt: updatedUser.updatedAt
@@ -103,15 +144,6 @@ const updateProfile = async (req, res, next) => {
 
 const changePassword = async (req, res, next) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Errores de validacion',
-        errors: errors.array()
-      });
-    }
-
     const userId = req.user.id;
     const { currentPassword, newPassword } = req.body;
 

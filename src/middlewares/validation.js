@@ -68,24 +68,34 @@ const loginValidation = [
 
 /**
  * Reglas de validacion para actualizacion de perfil
+ * ACTUALIZADO: Validacion mejorada para avatar en base64
  */
 const updateProfileValidation = [
   body('username')
     .optional()
     .trim()
     .isLength({ min: 3, max: 30 }).withMessage('El nombre de usuario debe tener entre 3 y 30 caracteres')
-    .matches(/^[a-zA-Z0-9_]+$/).withMessage('El nombre de usuario solo puede contener letras, numeros y guiones bajos'),
+    .matches(/^[a-zA-Z0-9_\-\s]+$/).withMessage('El nombre de usuario solo puede contener letras, numeros, espacios, guiones y guiones bajos'),
   
-  body('email')
+  // Avatar NO se valida aqui - se maneja en el controlador
+  // Esto permite manejar base64 de cualquier tamano sin problemas
+  
+  body('bio')
     .optional()
     .trim()
-    .isEmail().withMessage('Email invalido')
-    .normalizeEmail(),
+    .isLength({ max: 500 }).withMessage('La biografia no puede exceder 500 caracteres'),
   
-  body('avatar')
+  body('preferences')
     .optional()
-    .trim()
-    .isURL().withMessage('URL de avatar invalida'),
+    .isObject().withMessage('Las preferencias deben ser un objeto'),
+  
+  body('preferences.theme')
+    .optional()
+    .isIn(['light', 'dark', 'auto']).withMessage('Tema invalido'),
+  
+  body('preferences.language')
+    .optional()
+    .isIn(['es', 'en', 'fr', 'de', 'pt']).withMessage('Idioma invalido'),
   
   validate,
 ];

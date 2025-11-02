@@ -55,10 +55,23 @@ router.get(
  *             properties:
  *               username:
  *                 type: string
+ *                 minLength: 3
+ *                 maxLength: 30
  *               avatar:
  *                 type: string
+ *                 description: Base64 encoded image
+ *               bio:
+ *                 type: string
+ *                 maxLength: 500
  *               preferences:
  *                 type: object
+ *                 properties:
+ *                   theme:
+ *                     type: string
+ *                     enum: [light, dark, auto]
+ *                   language:
+ *                     type: string
+ *                     enum: [es, en, fr, de, pt]
  *     responses:
  *       200:
  *         description: Perfil actualizado exitosamente
@@ -78,7 +91,7 @@ router.put(
  * @swagger
  * /api/user/password:
  *   put:
- *     summary: Cambiar contrasena del usuario
+ *     summary: Cambiar contraseña del usuario
  *     tags: [User]
  *     security:
  *       - bearerAuth: []
@@ -100,9 +113,9 @@ router.put(
  *                 type: string
  *     responses:
  *       200:
- *         description: Contrasena actualizada exitosamente
+ *         description: Contraseña actualizada exitosamente
  *       400:
- *         description: Contrasena actual incorrecta
+ *         description: Contraseña actual incorrecta
  *       401:
  *         description: No autorizado
  */
@@ -171,13 +184,13 @@ router.put(
  * @swagger
  * /api/user/stats:
  *   get:
- *     summary: Obtener estadisticas del usuario
+ *     summary: Obtener estadísticas del usuario
  *     tags: [User]
  *     security:
  *       - bearerAuth: []
  *     responses:
  *       200:
- *         description: Estadisticas obtenidas exitosamente
+ *         description: Estadísticas obtenidas exitosamente
  *       401:
  *         description: No autorizado
  */

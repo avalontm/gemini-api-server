@@ -5,60 +5,62 @@ const { getCurrentTimestamp } = require('../utils/helpers/dateHelper');
 
 /**
  * Middleware para registrar todas las requests HTTP
+ * NOTA: El userId se captura al finalizar la request, después del middleware de autenticación
  */
 const requestLogger = (req, res, next) => {
   const startTime = Date.now();
   
-  // Capturar informacion inicial de la request
-  const requestInfo = {
+  // Capturar información inicial de la request (SIN userId aún)
+  const initialInfo = {
     timestamp: new Date().toISOString(),
     method: req.method,
     url: req.originalUrl || req.url,
     path: req.path,
     ip: req.ip || req.connection.remoteAddress,
     userAgent: req.get('user-agent') || 'unknown',
-    userId: req.userId || null,
     query: Object.keys(req.query).length > 0 ? req.query : null,
   };
   
-  // Log de inicio de request
+  // Log de inicio de request (sin userId porque aún no se ejecutó authenticate)
   logger.info(`[REQUEST] ${req.method} ${req.path}`, {
-    ...requestInfo,
+    ...initialInfo,
     body: sanitizeBody(req.body),
   });
   
-  // Interceptar el metodo res.json para capturar la respuesta
+  // Interceptar el método res.json para capturar la respuesta
   const originalJson = res.json.bind(res);
   res.json = function(body) {
     res.body = body;
     return originalJson(body);
   };
   
-  // Interceptar el metodo res.send para capturar la respuesta
+  // Interceptar el método res.send para capturar la respuesta
   const originalSend = res.send.bind(res);
   res.send = function(body) {
     res.body = body;
     return originalSend(body);
   };
   
-  // Capturar cuando la respuesta termina
+  // Capturar cuando la respuesta termina (AQUÍ ya tenemos userId)
   res.on('finish', () => {
     const duration = Date.now() - startTime;
     
+    // IMPORTANTE: Capturar userId AHORA, después de authenticate
+    const userId = req.userId || req.user?.id || req.user?._id?.toString() || null;
+    
     const responseInfo = {
+      ...initialInfo,
+      userId, // Agregar userId aquí
       statusCode: res.statusCode,
       duration: `${duration}ms`,
       contentLength: res.get('content-length') || 0,
+      success: res.statusCode < 400,
     };
     
-    // Determinar nivel de log segun status code
+    // Determinar nivel de log según status code
     const logLevel = getLogLevel(res.statusCode);
     
-    logger[logLevel](`[RESPONSE] ${req.method} ${req.path}`, {
-      ...requestInfo,
-      ...responseInfo,
-      success: res.statusCode < 400,
-    });
+    logger[logLevel](`[RESPONSE] ${req.method} ${req.path}`, responseInfo);
   });
   
   next();
@@ -74,6 +76,9 @@ const errorOnlyLogger = (req, res, next) => {
     if (res.statusCode >= 400) {
       const duration = Date.now() - startTime;
       
+      // Capturar userId después de authenticate
+      const userId = req.userId || req.user?.id || req.user?._id?.toString() || null;
+      
       logger.error(`[ERROR] ${req.method} ${req.path}`, {
         timestamp: new Date().toISOString(),
         method: req.method,
@@ -81,7 +86,7 @@ const errorOnlyLogger = (req, res, next) => {
         statusCode: res.statusCode,
         duration: `${duration}ms`,
         ip: req.ip,
-        userId: req.userId || null,
+        userId,
         userAgent: req.get('user-agent'),
         body: sanitizeBody(req.body),
       });
@@ -102,6 +107,8 @@ const slowRequestLogger = (thresholdMs = 3000) => {
       const duration = Date.now() - startTime;
       
       if (duration > thresholdMs) {
+        const userId = req.userId || req.user?.id || req.user?._id?.toString() || null;
+        
         logger.warn(`[SLOW REQUEST] ${req.method} ${req.path}`, {
           timestamp: new Date().toISOString(),
           method: req.method,
@@ -110,7 +117,7 @@ const slowRequestLogger = (thresholdMs = 3000) => {
           threshold: `${thresholdMs}ms`,
           statusCode: res.statusCode,
           ip: req.ip,
-          userId: req.userId || null,
+          userId,
         });
       }
     });
@@ -120,21 +127,23 @@ const slowRequestLogger = (thresholdMs = 3000) => {
 };
 
 /**
- * Middleware para registrar requests de usuarios especificos
+ * Middleware para registrar requests de usuarios específicos
  */
 const userActivityLogger = (req, res, next) => {
-  if (!req.userId) {
-    return next();
-  }
-  
   const startTime = Date.now();
   
   res.on('finish', () => {
+    const userId = req.userId || req.user?.id || req.user?._id?.toString();
+    
+    if (!userId) {
+      return;
+    }
+    
     const duration = Date.now() - startTime;
     
-    logger.info(`[USER ACTIVITY] ${req.userId}`, {
+    logger.info(`[USER ACTIVITY] ${userId}`, {
       timestamp: new Date().toISOString(),
-      userId: req.userId,
+      userId,
       username: req.user?.username || 'unknown',
       action: `${req.method} ${req.path}`,
       statusCode: res.statusCode,
@@ -154,12 +163,13 @@ const sensitiveResourceLogger = (req, res, next) => {
   
   res.on('finish', () => {
     const duration = Date.now() - startTime;
+    const userId = req.userId || req.user?.id || req.user?._id?.toString() || 'anonymous';
     
     logger.warn(`[SENSITIVE ACCESS] ${req.method} ${req.path}`, {
       timestamp: new Date().toISOString(),
       method: req.method,
       url: req.originalUrl || req.url,
-      userId: req.userId || 'anonymous',
+      userId,
       username: req.user?.username || 'unknown',
       statusCode: res.statusCode,
       duration: `${duration}ms`,
@@ -173,7 +183,7 @@ const sensitiveResourceLogger = (req, res, next) => {
 };
 
 /**
- * Middleware para registrar intentos de autenticacion
+ * Middleware para registrar intentos de autenticación
  */
 const authAttemptLogger = (req, res, next) => {
   const startTime = Date.now();
@@ -207,6 +217,7 @@ const fileUploadLogger = (req, res, next) => {
   res.on('finish', () => {
     if (req.file || req.files) {
       const duration = Date.now() - startTime;
+      const userId = req.userId || req.user?.id || req.user?._id?.toString() || 'anonymous';
       
       const fileInfo = req.file ? {
         filename: req.file.filename,
@@ -224,7 +235,7 @@ const fileUploadLogger = (req, res, next) => {
       
       logger.info(`[FILE UPLOAD] ${req.path}`, {
         timestamp: new Date().toISOString(),
-        userId: req.userId || 'anonymous',
+        userId,
         statusCode: res.statusCode,
         duration: `${duration}ms`,
         ...fileInfo,
@@ -245,12 +256,13 @@ const externalAPILogger = (apiName) => {
     
     res.on('finish', () => {
       const duration = Date.now() - startTime;
+      const userId = req.userId || req.user?.id || req.user?._id?.toString() || 'anonymous';
       
       logger.info(`[EXTERNAL API] ${apiName}`, {
         timestamp: new Date().toISOString(),
         api: apiName,
         endpoint: req.path,
-        userId: req.userId || 'anonymous',
+        userId,
         statusCode: res.statusCode,
         duration: `${duration}ms`,
         success: res.statusCode < 400,
@@ -262,7 +274,7 @@ const externalAPILogger = (apiName) => {
 };
 
 /**
- * Sanitizar body para remover informacion sensible de los logs
+ * Sanitizar body para remover información sensible de los logs
  */
 const sanitizeBody = (body) => {
   if (!body || typeof body !== 'object') {
@@ -285,17 +297,23 @@ const sanitizeBody = (body) => {
   
   const sanitized = { ...body };
   
+  // Redactar campos sensibles
   sensitiveFields.forEach(field => {
     if (sanitized[field]) {
       sanitized[field] = '[REDACTED]';
     }
   });
   
+  // Truncar avatar si es muy largo (base64)
+  if (sanitized.avatar && typeof sanitized.avatar === 'string' && sanitized.avatar.length > 100) {
+    sanitized.avatar = sanitized.avatar.substring(0, 100) + `... (${sanitized.avatar.length} chars)`;
+  }
+  
   return sanitized;
 };
 
 /**
- * Determinar nivel de log segun status code
+ * Determinar nivel de log según status code
  */
 const getLogLevel = (statusCode) => {
   if (statusCode >= 500) {
@@ -328,7 +346,6 @@ const createCustomLogger = (options = {}) => {
       method: req.method,
       url: req.originalUrl || req.url,
       ip: req.ip,
-      userId: req.userId || null,
     };
     
     if (logQuery && Object.keys(req.query).length > 0) {
@@ -356,9 +373,11 @@ const createCustomLogger = (options = {}) => {
     res.on('finish', () => {
       const duration = Date.now() - startTime;
       const logLevel = isSensitive ? 'warn' : getLogLevel(res.statusCode);
+      const userId = req.userId || req.user?.id || req.user?._id?.toString() || null;
       
       const responseInfo = {
         ...requestInfo,
+        userId, // Agregar userId aquí
         statusCode: res.statusCode,
         duration: `${duration}ms`,
       };
