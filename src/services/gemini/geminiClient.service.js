@@ -5,8 +5,6 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 class GeminiClientService {
   constructor() {
     this.apiKey = process.env.GEMINI_API_KEY;
-    // IMPORTANTE: Usar modelos Gemini 2.x (los 1.5 fueron retirados)
-    // Opciones válidas: gemini-2.0-flash, gemini-2.5-flash, gemini-2.5-flash-lite
     this.model = process.env.GEMINI_MODEL || 'gemini-2.0-flash-exp';
     
     if (!this.apiKey) {
@@ -19,8 +17,6 @@ class GeminiClientService {
 
   /**
    * Inicializa el modelo generativo
-   * @param {Object} config - Configuracion del modelo
-   * @returns {Object} - Modelo inicializado
    */
   initializeModel(config = {}) {
     try {
@@ -61,8 +57,6 @@ class GeminiClientService {
 
   /**
    * Obtiene el modelo generativo (inicializa si es necesario)
-   * @param {Object} config - Configuracion opcional
-   * @returns {Object} - Modelo generativo
    */
   getModel(config = {}) {
     if (!this.generativeModel || Object.keys(config).length > 0) {
@@ -73,9 +67,6 @@ class GeminiClientService {
 
   /**
    * Genera contenido a partir de un prompt de texto
-   * @param {string} prompt - Prompt de texto
-   * @param {Object} config - Configuracion opcional
-   * @returns {Promise<Object>} - Respuesta generada
    */
   async generateContent(prompt, config = {}) {
     try {
@@ -101,9 +92,6 @@ class GeminiClientService {
 
   /**
    * Genera contenido con streaming
-   * @param {string} prompt - Prompt de texto
-   * @param {Object} config - Configuracion opcional
-   * @returns {Promise<Object>} - Stream de respuesta
    */
   async generateContentStream(prompt, config = {}) {
     try {
@@ -121,10 +109,7 @@ class GeminiClientService {
   }
 
   /**
-   * Genera contenido multimodal (texto + imagenes)
-   * @param {Array} parts - Array de partes (texto e imagenes)
-   * @param {Object} config - Configuracion opcional
-   * @returns {Promise<Object>} - Respuesta generada
+   * Genera contenido multimodal (texto + imagenes/audio/pdf)
    */
   async generateMultimodalContent(parts, config = {}) {
     try {
@@ -148,10 +133,25 @@ class GeminiClientService {
   }
 
   /**
+   * Genera contenido multimodal con streaming
+   */
+  async generateMultimodalContentStream(parts, config = {}) {
+    try {
+      if (!Array.isArray(parts) || parts.length === 0) {
+        throw new Error('Parts debe ser un array no vacio');
+      }
+
+      const model = this.getModel(config);
+      const result = await model.generateContentStream(parts);
+
+      return result;
+    } catch (error) {
+      throw new Error(`Error generando contenido multimodal stream: ${error.message}`);
+    }
+  }
+
+  /**
    * Inicia un chat
-   * @param {Array} history - Historial de mensajes previos
-   * @param {Object} config - Configuracion opcional
-   * @returns {Object} - Sesion de chat
    */
   startChat(history = [], config = {}) {
     try {
@@ -173,9 +173,6 @@ class GeminiClientService {
 
   /**
    * Envia un mensaje en un chat existente
-   * @param {Object} chat - Sesion de chat
-   * @param {string} message - Mensaje a enviar
-   * @returns {Promise<Object>} - Respuesta del chat
    */
   async sendChatMessage(chat, message) {
     try {
@@ -197,9 +194,21 @@ class GeminiClientService {
   }
 
   /**
+   * Genera contenido con historial (para conversaciones)
+   */
+  async generateContentStreamWithHistory(prompt, history, config = {}) {
+    try {
+      const chat = this.startChat(history, config);
+      const result = await chat.sendMessageStream(prompt);
+      
+      return result;
+    } catch (error) {
+      throw new Error(`Error generando contenido con historial: ${error.message}`);
+    }
+  }
+
+  /**
    * Cuenta tokens de un prompt (con fallback a estimacion)
-   * @param {string|Array} content - Contenido a contar
-   * @returns {Promise<number>} - Numero de tokens
    */
   async countTokens(content) {
     try {
@@ -207,29 +216,22 @@ class GeminiClientService {
         return 0;
       }
 
-      // Intentar usar la API de countTokens
       try {
         const model = this.getModel();
         const result = await model.countTokens(content);
         return result.totalTokens;
       } catch (apiError) {
-        // Si falla la API, usar estimacion
-        console.warn('countTokens API no disponible, usando estimación');
+        console.warn('countTokens API no disponible, usando estimacion');
         return this.estimateTokens(content);
       }
     } catch (error) {
-      // Fallback final: estimacion
-      console.error('Error en countTokens, usando estimación:', error.message);
+      console.error('Error en countTokens, usando estimacion:', error.message);
       return this.estimateTokens(content);
     }
   }
 
   /**
    * Estima tokens basado en caracteres
-   * Regla general: ~4 caracteres = 1 token para ingles
-   * Para español: ~5-6 caracteres = 1 token
-   * @param {string|Array} content - Contenido a estimar
-   * @returns {number} - Numero estimado de tokens
    */
   estimateTokens(content) {
     try {
@@ -249,22 +251,17 @@ class GeminiClientService {
         }).join(' ');
       }
 
-      // Estimacion conservadora: 5 caracteres por token (para español)
       const estimatedTokens = Math.ceil(text.length / 5);
       
-      // Agregar overhead minimo de 10 tokens por mensaje
       return estimatedTokens + 10;
     } catch (error) {
       console.error('Error estimando tokens:', error.message);
-      return 100; // Valor por defecto seguro
+      return 100;
     }
   }
 
   /**
    * Convierte archivo a formato Gemini
-   * @param {Buffer} fileBuffer - Buffer del archivo
-   * @param {string} mimeType - Tipo MIME del archivo
-   * @returns {Object} - Objeto en formato Gemini
    */
   fileToGenerativePart(fileBuffer, mimeType) {
     try {
@@ -285,8 +282,6 @@ class GeminiClientService {
 
   /**
    * Valida la configuracion del modelo
-   * @param {Object} config - Configuracion a validar
-   * @returns {boolean} - true si es valida
    */
   validateConfig(config) {
     try {
@@ -322,7 +317,6 @@ class GeminiClientService {
 
   /**
    * Obtiene informacion del modelo actual
-   * @returns {Object} - Informacion del modelo
    */
   getModelInfo() {
     return {

@@ -8,13 +8,6 @@ const fs = require('fs').promises;
 class VisionAnalysisService {
   /**
    * Analiza una imagen con un prompt
-   * @param {Object} data - Datos del analisis
-   * @param {string} data.prompt - Prompt de texto
-   * @param {string} data.imagePath - Ruta de la imagen
-   * @param {string} data.userId - ID del usuario
-   * @param {string} data.conversationId - ID de conversacion (opcional)
-   * @param {Object} data.config - Configuracion opcional
-   * @returns {Promise<Object>} - Analisis generado
    */
   async analyzeImage(data) {
     try {
@@ -108,13 +101,6 @@ class VisionAnalysisService {
 
   /**
    * Analiza multiples imagenes con un prompt
-   * @param {Object} data - Datos del analisis
-   * @param {string} data.prompt - Prompt de texto
-   * @param {Array} data.imagePaths - Array de rutas de imagenes
-   * @param {string} data.userId - ID del usuario
-   * @param {string} data.conversationId - ID de conversacion (opcional)
-   * @param {Object} data.config - Configuracion opcional
-   * @returns {Promise<Object>} - Analisis generado
    */
   async analyzeMultipleImages(data) {
     try {
@@ -217,12 +203,113 @@ class VisionAnalysisService {
   }
 
   /**
+   * Analiza contenido multimodal (imagenes, audio, PDFs)
+   * Este metodo es compatible con el controller multimodal
+   */
+  async analyzeMultimodal(data) {
+    try {
+      const { prompt, imagePaths, userId, conversationId, config = {} } = data;
+
+      if (!prompt && (!imagePaths || imagePaths.length === 0)) {
+        throw new Error('Se requiere al menos un prompt o imagePaths');
+      }
+
+      let conversation;
+      if (conversationId) {
+        conversation = await conversationService.getConversationById(conversationId, userId);
+        if (!conversation) {
+          throw new Error('Conversacion no encontrada');
+        }
+      } else {
+        const title = prompt ? `${prompt.substring(0, 40)}...` : 'Analisis multimodal';
+        conversation = await conversationService.createConversation({
+          userId,
+          title,
+          tags: ['multimodal', 'vision']
+        });
+      }
+
+      const parts = [];
+      const attachments = [];
+
+      if (prompt) {
+        parts.push({ text: prompt });
+      }
+
+      if (imagePaths && Array.isArray(imagePaths) && imagePaths.length > 0) {
+        for (const imagePath of imagePaths) {
+          const imageBuffer = await fs.readFile(imagePath);
+          const mimeType = this.getMimeType(imagePath);
+          const imagePart = geminiClient.fileToGenerativePart(imageBuffer, mimeType);
+          
+          parts.push(imagePart);
+          attachments.push({
+            type: 'image',
+            url: imagePath,
+            name: imagePath.split('/').pop(),
+            mimeType
+          });
+        }
+      }
+
+      const userMessage = await messageService.createMessage({
+        conversationId: conversation._id,
+        role: 'user',
+        content: prompt || 'Analisis de archivos',
+        type: 'multimodal',
+        attachments,
+        tokens: await geminiClient.countTokens(prompt || 'Analisis de archivos')
+      });
+
+      await conversationService.addMessageToConversation(
+        conversation._id,
+        userMessage._id
+      );
+
+      const result = await geminiClient.generateMultimodalContent(parts, config);
+
+      const assistantMessage = await messageService.createMessage({
+        conversationId: conversation._id,
+        role: 'assistant',
+        content: result.text,
+        type: 'multimodal',
+        tokens: await geminiClient.countTokens(result.text)
+      });
+
+      await conversationService.addMessageToConversation(
+        conversation._id,
+        assistantMessage._id
+      );
+
+      const totalTokens = userMessage.tokens + assistantMessage.tokens;
+      await conversationService.updateTokenUsage(conversation._id, totalTokens);
+
+      return {
+        response: result.text,
+        conversationId: conversation._id,
+        messageId: assistantMessage._id,
+        attachments: attachments.map(att => ({
+          type: att.type,
+          name: att.name
+        })),
+        tokens: {
+          prompt: userMessage.tokens,
+          completion: assistantMessage.tokens,
+          total: totalTokens
+        },
+        metadata: {
+          model: geminiClient.model,
+          filesProcessed: imagePaths ? imagePaths.length : 0,
+          timestamp: new Date()
+        }
+      };
+    } catch (error) {
+      throw new Error(`Error en analisis multimodal: ${error.message}`);
+    }
+  }
+
+  /**
    * Describe una imagen sin prompt especifico
-   * @param {Object} data - Datos del analisis
-   * @param {string} data.imagePath - Ruta de la imagen
-   * @param {string} data.userId - ID del usuario
-   * @param {Object} data.config - Configuracion opcional
-   * @returns {Promise<Object>} - Descripcion generada
    */
   async describeImage(data) {
     try {
@@ -243,12 +330,6 @@ class VisionAnalysisService {
 
   /**
    * Compara dos imagenes
-   * @param {Object} data - Datos de la comparacion
-   * @param {string} data.image1Path - Ruta de la primera imagen
-   * @param {string} data.image2Path - Ruta de la segunda imagen
-   * @param {string} data.userId - ID del usuario
-   * @param {Object} data.config - Configuracion opcional
-   * @returns {Promise<Object>} - Comparacion generada
    */
   async compareImages(data) {
     try {
@@ -273,8 +354,6 @@ class VisionAnalysisService {
 
   /**
    * Obtiene el tipo MIME de un archivo por extension
-   * @param {string} filePath - Ruta del archivo
-   * @returns {string} - Tipo MIME
    */
   getMimeType(filePath) {
     const extension = filePath.split('.').pop().toLowerCase();
@@ -285,16 +364,19 @@ class VisionAnalysisService {
       'png': 'image/png',
       'gif': 'image/gif',
       'webp': 'image/webp',
-      'bmp': 'image/bmp'
+      'bmp': 'image/bmp',
+      'pdf': 'application/pdf',
+      'mp3': 'audio/mpeg',
+      'wav': 'audio/wav',
+      'ogg': 'audio/ogg',
+      'webm': 'audio/webm'
     };
 
-    return mimeTypes[extension] || 'image/jpeg';
+    return mimeTypes[extension] || 'application/octet-stream';
   }
 
   /**
    * Valida el formato de imagen soportado
-   * @param {string} filePath - Ruta del archivo
-   * @returns {boolean} - true si es soportado
    */
   validateImageFormat(filePath) {
     const supportedFormats = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'];

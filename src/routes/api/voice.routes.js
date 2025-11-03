@@ -24,14 +24,38 @@ const storage = multer.diskStorage({
   }
 });
 
-// Filtro de archivos de audio
+// Filtro de archivos de audio (mas permisivo)
 const fileFilter = (req, file, cb) => {
-  const allowedTypes = ['audio/wav', 'audio/mpeg', 'audio/mp3', 'audio/webm', 'audio/ogg'];
+  // Lista completa de tipos MIME de audio aceptados
+  const allowedTypes = [
+    'audio/wav',
+    'audio/wave',
+    'audio/x-wav',
+    'audio/mpeg',
+    'audio/mp3',
+    'audio/mpeg3',
+    'audio/x-mpeg-3',
+    'audio/webm',
+    'audio/ogg',
+    'audio/opus',
+    'audio/x-m4a',
+    'audio/m4a',
+    'audio/mp4',
+    'audio/flac',
+    'audio/x-flac'
+  ];
   
-  if (allowedTypes.includes(file.mimetype)) {
+  // Tambien validar por extension
+  const ext = path.extname(file.originalname).toLowerCase();
+  const allowedExtensions = ['.wav', '.mp3', '.webm', '.ogg', '.opus', '.m4a', '.mp4', '.flac'];
+  
+  const isMimeTypeValid = allowedTypes.includes(file.mimetype);
+  const isExtensionValid = allowedExtensions.includes(ext);
+  
+  if (isMimeTypeValid || isExtensionValid) {
     cb(null, true);
   } else {
-    cb(new Error('Formato de audio no soportado. Solo se permiten: WAV, MP3, WEBM, OGG'), false);
+    cb(new Error(`Formato de audio no soportado. Tipo recibido: ${file.mimetype}, Extension: ${ext}. Formatos permitidos: WAV, MP3, WEBM, OGG, M4A, FLAC`), false);
   }
 };
 
@@ -60,34 +84,10 @@ const validate = (req, res, next) => {
   next();
 };
 
-// Controller (se importara cuando se cree)
-// const { transcribeVoice } = require('../../controllers/gemini/voice.controller');
+// Importar controller real
+const { processVoice, transcribeOnly, analyzeVoice } = require('../../controllers/gemini/voice.controller');
 
-// Placeholder controller (reemplazar cuando se cree el real)
-const transcribeVoice = (req, res) => {
-  res.status(200).json({ 
-    success: true,
-    message: 'TranscribeVoice controller pendiente de implementacion',
-    receivedData: {
-      file: req.file ? {
-        filename: req.file.filename,
-        originalname: req.file.originalname,
-        mimetype: req.file.mimetype,
-        size: req.file.size,
-        path: req.file.path
-      } : null,
-      conversationId: req.body.conversationId,
-      language: req.body.language,
-      prompt: req.body.prompt
-    },
-    user: {
-      id: req.userId,
-      email: req.user?.email
-    }
-  });
-};
-
-// Validacion para transcripcion de voz
+// Validacion para procesamiento de voz
 const voiceValidation = [
   body('conversationId')
     .optional()
@@ -108,13 +108,29 @@ const voiceValidation = [
     .withMessage('El prompt adicional no debe exceder 2000 caracteres')
 ];
 
+// Validacion para analisis de voz
+const analyzeValidation = [
+  body('instruction')
+    .notEmpty()
+    .withMessage('La instruccion es requerida')
+    .isString()
+    .trim()
+    .isLength({ min: 1, max: 2000 })
+    .withMessage('La instruccion debe tener entre 1 y 2000 caracteres'),
+  
+  body('conversationId')
+    .optional()
+    .isMongoId()
+    .withMessage('ID de conversacion invalido')
+];
+
 /**
  * @swagger
  * /api/gemini/voice:
  *   post:
- *     summary: Transcribir audio con Gemini
- *     description: Sube un archivo de audio para transcribirlo y opcionalmente procesarlo con un prompt
- *     tags: [Gemini]
+ *     summary: Transcribir y procesar audio con Gemini
+ *     description: Sube un archivo de audio para transcribirlo y generar una respuesta usando Gemini. El audio se transcribe automaticamente y luego se procesa como texto.
+ *     tags: [Gemini - Voice]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -129,10 +145,10 @@ const voiceValidation = [
  *               audio:
  *                 type: string
  *                 format: binary
- *                 description: Archivo de audio a transcribir (WAV, MP3, WEBM)
+ *                 description: Archivo de audio a transcribir (WAV, MP3, WEBM, OGG, M4A, FLAC)
  *               conversationId:
  *                 type: string
- *                 description: ID de la conversacion existente (opcional)
+ *                 description: ID de la conversacion existente para mantener contexto (opcional)
  *                 example: 507f1f77bcf86cd799439011
  *               language:
  *                 type: string
@@ -147,7 +163,7 @@ const voiceValidation = [
  *                 example: Resume el contenido del audio en 3 puntos clave
  *     responses:
  *       200:
- *         description: Audio transcrito exitosamente
+ *         description: Audio transcrito y procesado exitosamente
  *         content:
  *           application/json:
  *             schema:
@@ -156,52 +172,36 @@ const voiceValidation = [
  *                 success:
  *                   type: boolean
  *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: Audio procesado exitosamente
  *                 data:
  *                   type: object
  *                   properties:
  *                     transcription:
  *                       type: string
  *                       description: Texto transcrito del audio
+ *                       example: Hola, este es un mensaje de prueba para transcribir.
  *                     response:
  *                       type: string
- *                       description: Respuesta procesada si se proporciono un prompt
+ *                       description: Respuesta generada por Gemini
+ *                       example: Entiendo, has enviado un mensaje de prueba. ¿En que puedo ayudarte?
  *                     conversationId:
  *                       type: string
  *                       description: ID de la conversacion
- *                     messageId:
- *                       type: string
- *                       description: ID del mensaje creado
- *                     audioUrl:
- *                       type: string
- *                       description: URL temporal del audio procesado
+ *                       example: 507f1f77bcf86cd799439011
  *                     tokens:
  *                       type: object
  *                       properties:
  *                         prompt:
  *                           type: integer
+ *                           example: 15
  *                         completion:
  *                           type: integer
+ *                           example: 25
  *                         total:
  *                           type: integer
- *                     metadata:
- *                       type: object
- *                       properties:
- *                         model:
- *                           type: string
- *                           example: gemini-1.5-flash
- *                         language:
- *                           type: string
- *                           example: es
- *                         duration:
- *                           type: number
- *                           description: Duracion del audio en segundos
- *                           example: 45.2
- *                         audioFormat:
- *                           type: string
- *                           example: audio/wav
- *                         timestamp:
- *                           type: string
- *                           format: date-time
+ *                           example: 40
  *       400:
  *         description: Error de validacion o formato de audio invalido
  *         content:
@@ -218,7 +218,7 @@ const voiceValidation = [
  *       401:
  *         description: No autorizado - Token invalido o expirado
  *       413:
- *         description: Archivo demasiado grande
+ *         description: Archivo demasiado grande (maximo 25MB)
  *       429:
  *         description: Demasiadas peticiones - Rate limit excedido
  *       500:
@@ -231,7 +231,147 @@ router.post(
   upload.single('audio'),
   ...voiceValidation,
   validate,
-  asyncHandler(transcribeVoice)
+  asyncHandler(processVoice)
 );
 
-module.exports = router;
+/**
+ * @swagger
+ * /api/gemini/voice/transcribe:
+ *   post:
+ *     summary: Solo transcribir audio sin generar respuesta
+ *     description: Transcribe un archivo de audio a texto sin procesamiento adicional. Util cuando solo necesitas la transcripcion sin analisis.
+ *     tags: [Gemini - Voice]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - audio
+ *             properties:
+ *               audio:
+ *                 type: string
+ *                 format: binary
+ *                 description: Archivo de audio a transcribir
+ *     responses:
+ *       200:
+ *         description: Audio transcrito exitosamente
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: Audio transcrito exitosamente
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     transcription:
+ *                       type: string
+ *                       example: Este es el texto transcrito del audio
+ *       400:
+ *         description: Error de validacion
+ *       401:
+ *         description: No autorizado
+ *       500:
+ *         description: Error del servidor
+ */
+router.post(
+  '/transcribe',
+  authenticate,
+  uploadLimiter,
+  upload.single('audio'),
+  asyncHandler(transcribeOnly)
+);
+
+/**
+ * @swagger
+ * /api/gemini/voice/analyze:
+ *   post:
+ *     summary: Analizar contenido de audio con instrucciones especificas
+ *     description: Transcribe un audio y lo analiza segun instrucciones especificas. Permite resumir, extraer informacion clave, traducir, etc.
+ *     tags: [Gemini - Voice]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - audio
+ *               - instruction
+ *             properties:
+ *               audio:
+ *                 type: string
+ *                 format: binary
+ *                 description: Archivo de audio a analizar
+ *               instruction:
+ *                 type: string
+ *                 description: Instruccion especifica para analizar el contenido
+ *                 example: Resume el contenido de este audio en 3 puntos clave y destaca las ideas principales
+ *               conversationId:
+ *                 type: string
+ *                 description: ID de conversacion existente
+ *                 example: 507f1f77bcf86cd799439011
+ *     responses:
+ *       200:
+ *         description: Audio analizado exitosamente
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: Audio analizado exitosamente
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     transcription:
+ *                       type: string
+ *                       example: Texto original transcrito...
+ *                     analysis:
+ *                       type: string
+ *                       example: Resumen en 3 puntos - 1. Primer punto clave...
+ *                     conversationId:
+ *                       type: string
+ *                       example: 507f1f77bcf86cd799439011
+ *                     tokens:
+ *                       type: object
+ *                       properties:
+ *                         prompt:
+ *                           type: integer
+ *                         completion:
+ *                           type: integer
+ *                         total:
+ *                           type: integer
+ *       400:
+ *         description: Datos invalidos o instruccion faltante
+ *       401:
+ *         description: No autorizado
+ *       500:
+ *         description: Error del servidor
+ */
+router.post(
+  '/analyze',
+  authenticate,
+  uploadLimiter,
+  upload.single('audio'),
+  ...analyzeValidation,
+  validate,
+  asyncHandler(analyzeVoice)
+);
+
+module.exports = router
