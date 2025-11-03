@@ -44,6 +44,7 @@ const multimodalRoutes = safeImport('./api/multimodal.routes', 'multimodalRoutes
 const pdfRoutes = safeImport('./api/pdf.routes', 'pdfRoutes');
 const conversationRoutes = safeImport('./api/conversation.routes', 'conversationRoutes');
 const exportRoutes = safeImport('./api/export.routes', 'exportRoutes');
+const reportRoutes = safeImport('./api/report.routes', 'reportRoutes');
 const userRoutes = safeImport('./api/user.routes', 'userRoutes');
 
 console.log('=== RUTAS IMPORTADAS ===\n');
@@ -83,6 +84,13 @@ router.get('/', (req, res) => {
         txt: 'GET /api/export/:conversationId/txt',
         json: 'GET /api/export/:conversationId/json',
       },
+      reports: {
+        generate: 'POST /api/reports/generate',
+        generateAndSave: 'POST /api/reports/generate-and-save',
+        fromTemplate: 'POST /api/reports/generate-from-template',
+        templates: 'GET /api/reports/templates',
+        exportConversation: 'GET /api/reports/conversation/:conversationId/docx',
+      },
       user: {
         profile: 'GET /api/user/profile',
         updateProfile: 'PUT /api/user/profile',
@@ -115,11 +123,12 @@ geminiRouter.use('/pdf', pdfRoutes);
 router.use('/gemini', geminiRouter);
 
 /**
- * Rutas de conversaciones, exportacion y usuario
+ * Rutas de conversaciones, exportacion, reportes y usuario
  */
-console.log('Montando rutas de conversaciones y usuario...');
+console.log('Montando rutas de conversaciones, reportes y usuario...');
 router.use('/conversations', conversationRoutes);
 router.use('/export', exportRoutes);
+router.use('/reports', reportRoutes);
 router.use('/user', userRoutes);
 
 console.log('Todas las rutas montadas exitosamente\n');

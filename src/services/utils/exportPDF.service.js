@@ -2,10 +2,48 @@
 
 const fs = require('fs').promises;
 const path = require('path');
+const htmlPdf = require('html-pdf-node');
 
 class ExportPDFService {
   constructor() {
     this.outputDir = path.join(__dirname, '../../../exports/pdf');
+  }
+
+  /**
+   * Genera PDF buffer
+   * @param {Object} params - Parametros
+   * @param {Object} params.conversation - Datos de la conversacion
+   * @param {Array} params.messages - Array de mensajes
+   * @param {Object} params.user - Usuario que exporta
+   * @returns {Promise<Buffer>} - Buffer del PDF
+   */
+  async generatePDF({ conversation, messages, user }) {
+    try {
+      const html = this.generateHTML(conversation, messages, {
+        includeMetadata: true,
+        includeAttachments: true,
+        includeTokenStats: true
+      });
+
+      const file = { content: html };
+      
+      const options = {
+        format: 'A4',
+        printBackground: true,
+        margin: {
+          top: '20px',
+          right: '20px',
+          bottom: '20px',
+          left: '20px'
+        }
+      };
+
+      const pdfBuffer = await htmlPdf.generatePdf(file, options);
+
+      return pdfBuffer;
+    } catch (error) {
+      throw new Error(`Error generando PDF: ${error.message}`);
+    }
   }
 
   /**
@@ -34,14 +72,27 @@ class ExportPDFService {
       const fileName = this.generateFileName(conversation);
       const filePath = path.join(this.outputDir, fileName);
 
-      await fs.writeFile(filePath, html, 'utf8');
+      const file = { content: html };
+      
+      const pdfOptions = {
+        format: 'A4',
+        path: filePath,
+        printBackground: true,
+        margin: {
+          top: '20px',
+          right: '20px',
+          bottom: '20px',
+          left: '20px'
+        }
+      };
+
+      await htmlPdf.generatePdf(file, pdfOptions);
 
       return {
         success: true,
         filePath,
         fileName,
-        size: (await fs.stat(filePath)).size,
-        note: 'HTML generado. Para convertir a PDF real, se requiere libreria como puppeteer o pdfkit'
+        size: (await fs.stat(filePath)).size
       };
     } catch (error) {
       throw new Error(`Error exportando a PDF: ${error.message}`);
@@ -76,10 +127,8 @@ class ExportPDFService {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             line-height: 1.6;
             color: #333;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 40px 20px;
-            background: #f5f5f5;
+            padding: 20px;
+            background: white;
         }
         
         .header {
@@ -96,11 +145,11 @@ class ExportPDFService {
         }
         
         .metadata {
-            background: white;
+            background: #f9f9f9;
             padding: 20px;
             border-radius: 8px;
             margin-bottom: 20px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border: 1px solid #e0e0e0;
         }
         
         .metadata-item {
@@ -124,7 +173,8 @@ class ExportPDFService {
             padding: 20px;
             margin-bottom: 15px;
             border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border: 1px solid #e0e0e0;
+            page-break-inside: avoid;
         }
         
         .message-user {
@@ -187,11 +237,11 @@ class ExportPDFService {
         }
         
         .stats {
-            background: white;
+            background: #f9f9f9;
             padding: 20px;
             border-radius: 8px;
             margin-top: 30px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border: 1px solid #e0e0e0;
         }
         
         .stats h3 {
@@ -217,7 +267,7 @@ class ExportPDFService {
         .tag {
             display: inline-block;
             padding: 4px 12px;
-            background: #667eea;
+            background: rgba(255,255,255,0.3);
             color: white;
             border-radius: 20px;
             font-size: 12px;
@@ -233,15 +283,8 @@ class ExportPDFService {
             font-size: 12px;
         }
         
-        @media print {
-            body {
-                background: white;
-            }
-            
-            .message, .metadata, .stats {
-                box-shadow: none;
-                border: 1px solid #ddd;
-            }
+        @page {
+            margin: 20px;
         }
     </style>
 </head>
@@ -432,7 +475,7 @@ class ExportPDFService {
       .replace(/^-|-$/g, '')
       .substring(0, 50);
     
-    return `conversation_${title}_${timestamp}.html`;
+    return `conversation_${title}_${timestamp}.pdf`;
   }
 
   /**

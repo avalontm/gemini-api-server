@@ -9,6 +9,68 @@ class ExportTXTService {
   }
 
   /**
+   * Genera contenido TXT directamente (usado por el controlador)
+   * @param {Object} params - Parametros
+   * @param {Object} params.conversation - Conversacion
+   * @param {Array} params.messages - Mensajes
+   * @param {Object} params.user - Usuario
+   * @returns {string} - Contenido TXT
+   */
+  generateTXT({ conversation, messages, user }) {
+    return this.generateContent(conversation, messages, {
+      includeMetadata: true,
+      includeAttachments: true,
+      includeTokenStats: true,
+      includeTimestamps: true,
+      separator: '='
+    });
+  }
+
+  /**
+   * Genera TXT para multiples conversaciones (usado por exportacion masiva)
+   * @param {Object} params - Parametros
+   * @param {Array} params.conversations - Array de conversaciones con mensajes
+   * @param {Object} params.user - Usuario
+   * @returns {string} - Contenido TXT
+   */
+  generateBulkTXT({ conversations, user }) {
+    let content = '';
+    const divider = '='.repeat(80);
+
+    content += divider + '\n';
+    content += this.centerText('EXPORTACION MASIVA DE CONVERSACIONES', 80) + '\n';
+    content += divider + '\n\n';
+
+    content += `Usuario: ${user.username} (${user.email})\n`;
+    content += `Total de conversaciones: ${conversations.length}\n`;
+    content += `Fecha de exportacion: ${new Date().toLocaleString('es-ES')}\n\n`;
+
+    for (let i = 0; i < conversations.length; i++) {
+      const { conversation, messages } = conversations[i];
+
+      content += '\n' + divider + '\n';
+      content += this.centerText(`CONVERSACION ${i + 1} DE ${conversations.length}`, 80) + '\n';
+      content += divider + '\n\n';
+
+      content += this.generateContent(conversation, messages, {
+        includeMetadata: true,
+        includeAttachments: true,
+        includeTokenStats: true,
+        includeTimestamps: true,
+        separator: '='
+      });
+
+      content += '\n\n';
+    }
+
+    content += divider + '\n';
+    content += this.centerText('FIN DE EXPORTACION MASIVA', 80) + '\n';
+    content += divider + '\n';
+
+    return content;
+  }
+
+  /**
    * Exporta conversacion a formato TXT
    * @param {Object} conversation - Datos de la conversacion
    * @param {Array} messages - Array de mensajes
@@ -237,10 +299,9 @@ class ExportTXTService {
 
       for (let i = 0; i < messages.length; i++) {
         const message = messages[i];
-        const roleEmoji = message.role === 'user' ? '👤' : '🤖';
         const roleLabel = message.role === 'user' ? 'Usuario' : 'Asistente';
 
-        content += `### ${roleEmoji} ${roleLabel} - Mensaje ${i + 1}\n\n`;
+        content += `### ${roleLabel} - Mensaje ${i + 1}\n\n`;
         content += `${message.content}\n\n`;
 
         if (message.attachments && message.attachments.length > 0) {
