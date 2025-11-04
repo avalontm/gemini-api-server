@@ -74,6 +74,25 @@ const userSchema = new mongoose.Schema(
       default: USER_ROLES.ALUMNO,
     },
     
+    preferences: {
+      theme: {
+        type: String,
+        enum: ['light', 'dark', 'system'],
+        default: 'system'
+      },
+      language: {
+        type: String,
+        enum: ['es', 'en'],
+        default: 'es'
+      },
+      notifications: {
+        email: { type: Boolean, default: true },
+        push: { type: Boolean, default: false },
+        updates: { type: Boolean, default: true },
+        tips: { type: Boolean, default: true }
+      }
+    },
+    
     isActive: {
       type: Boolean,
       default: true,
@@ -154,6 +173,7 @@ userSchema.methods.toPublicJSON = function () {
     avatar: this.avatar,
     telefono: this.telefono,
     role: this.role,
+    preferences: this.preferences,
     isActive: this.isActive,
     isVerified: this.isVerified,
     lastLogin: this.lastLogin,

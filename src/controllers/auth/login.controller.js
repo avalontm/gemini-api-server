@@ -1,9 +1,6 @@
 // src/controllers/auth/login.controller.js
 
-const passwordService = require('../../services/auth/password.service');
-const tokenService = require('../../services/auth/token.service');
-const userService = require('../../services/database/user.service');
-const sessionService = require('../../services/auth/session.service');
+const authService = require('../../services/auth/auth.service');
 const { validationResult } = require('express-validator');
 
 const login = async (req, res, next) => {
@@ -19,54 +16,14 @@ const login = async (req, res, next) => {
 
     const { email, password } = req.body;
 
+    console.log('Email recibido:', email);
+    console.log('Password recibido:', password ? '***' : 'vacío');
 
-    const User = require('../../models/User.model');
-    const user = await User.findOne({ email }).select('+password');
-    
-    // LOGS DE DIAGNOSTICO - TEMPORAL
-console.log('Usuario encontrado:', !!user);
-console.log('Email buscado:', email);
-console.log('Usuario en DB:', user ? user.email : 'No encontrado');
-console.log('Password en DB existe:', user ? !!user.password : 'N/A');
-console.log('Password recibido:', password);
-
-
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: 'Credenciales invalidas'
-      });
-    }
-
-    const isPasswordValid = await passwordService.comparePassword(
-      password,
-      user.password
+    const result = await authService.login(
+      { email, password },
+      req.ip,
+      req.get('user-agent')
     );
-
-    console.log('Password válido:', isPasswordValid);
-console.log('Tipo de password recibido:', typeof password);
-console.log('Tipo de hash en BD:', typeof user.password);
-
-
-    if (!isPasswordValid) {
-      return res.status(401).json({
-        success: false,
-        message: 'Credenciales invalidas'
-      });
-    }
-
-    const token = tokenService.generateToken({
-      id: user._id,
-      email: user.email,
-      role: user.role
-    });
-
-    await sessionService.createSession({
-      userId: user._id,
-      token,
-      ipAddress: req.ip,
-      userAgent: req.get('user-agent')
-    });
 
     const cookieOptions = {
       expires: new Date(
@@ -77,26 +34,60 @@ console.log('Tipo de hash en BD:', typeof user.password);
       sameSite: 'strict'
     };
 
-    res.cookie('token', token, cookieOptions);
+    res.cookie('token', result.token, cookieOptions);
 
-    user.password = undefined;
+    const userResponse = {
+      id: result.user._id,
+      numeroControl: result.user.numeroControl,
+      email: result.user.email,
+      nombreCompleto: result.user.nombreCompleto,
+      carrera: result.user.carrera,
+      semestre: result.user.semestre,
+      telefono: result.user.telefono,
+      avatar: result.user.avatar,
+      role: result.user.role,
+      preferences: result.user.preferences || {
+        theme: 'system',
+        language: 'es',
+        notifications: {
+          email: true,
+          push: false,
+          updates: true,
+          tips: true,
+        }
+      },
+      isActive: result.user.isActive,
+      isVerified: result.user.isVerified,
+      lastLogin: result.user.lastLogin,
+      createdAt: result.user.createdAt,
+      updatedAt: result.user.updatedAt
+    };
 
     res.status(200).json({
       success: true,
       message: 'Login exitoso',
       data: {
-        user: {
-          id: user._id,
-          username: user.username,
-          email: user.email,
-          role: user.role,
-          avatar: user.avatar,
-          preferences: user.preferences
-        },
-        token
+        user: userResponse,
+        token: result.token
       }
     });
   } catch (error) {
+    console.error('Error en login:', error);
+    
+    if (error.message.includes('Credenciales invalidas')) {
+      return res.status(401).json({
+        success: false,
+        message: 'Credenciales invalidas'
+      });
+    }
+    
+    if (error.message.includes('Error en login')) {
+      return res.status(400).json({
+        success: false,
+        message: error.message.replace('Error en login: ', '')
+      });
+    }
+    
     next(error);
   }
 };
