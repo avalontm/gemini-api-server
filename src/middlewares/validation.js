@@ -2,6 +2,7 @@
 
 const { body, param, query, validationResult } = require('express-validator');
 const { validationErrorResponse } = require('../utils/helpers/responseFormatter');
+const { CARRERAS } = require('../config/constants');
 
 /**
  * Middleware para validar resultados de express-validator
@@ -24,39 +25,63 @@ const validate = (req, res, next) => {
 };
 
 /**
- * Reglas de validacion para registro de usuario
+ * Reglas de validacion para registro de usuario del TecNM
  */
 const registerValidation = [
-  body('username')
+  body('numeroControl')
     .trim()
-    .notEmpty().withMessage('El nombre de usuario es requerido')
-    .isLength({ min: 3, max: 30 }).withMessage('El nombre de usuario debe tener entre 3 y 30 caracteres')
-    .matches(/^[a-zA-Z0-9_]+$/).withMessage('El nombre de usuario solo puede contener letras, numeros y guiones bajos'),
-  
-  body('email')
-    .trim()
-    .notEmpty().withMessage('El email es requerido')
-    .isEmail().withMessage('Email invalido')
-    .normalizeEmail(),
+    .notEmpty().withMessage('El numero de control es requerido')
+    .matches(/^\d{8}$/).withMessage('El numero de control debe tener 8 digitos'),
   
   body('password')
     .notEmpty().withMessage('La contraseña es requerida')
-    .isLength({ min: 8 }).withMessage('La contraseña debe tener al menos 8 caracteres')
-    .matches(/[A-Z]/).withMessage('La contraseña debe contener al menos una mayuscula')
-    .matches(/[a-z]/).withMessage('La contraseña debe contener al menos una minuscula')
-    .matches(/[0-9]/).withMessage('La contraseña debe contener al menos un numero')
-    .matches(/[@$!%*?&#]/).withMessage('La contraseña debe contener al menos un caracter especial (@$!%*?&#)'),
+    .isLength({ min: 6 }).withMessage('La contraseña debe tener al menos 6 caracteres'),
+  
+  body('nombreCompleto')
+    .trim()
+    .notEmpty().withMessage('El nombre completo es requerido')
+    .isLength({ min: 3, max: 100 }).withMessage('El nombre completo debe tener entre 3 y 100 caracteres'),
+  
+  body('carrera')
+    .trim()
+    .notEmpty().withMessage('La carrera es requerida')
+    .isIn(Object.values(CARRERAS)).withMessage('Carrera no valida'),
+  
+  body('semestre')
+    .notEmpty().withMessage('El semestre es requerido')
+    .isInt({ min: 1, max: 12 }).withMessage('El semestre debe estar entre 1 y 12')
+    .toInt(),
+  
+  body('telefono')
+    .optional()
+    .trim()
+    .matches(/^[0-9]{10}$/).withMessage('El telefono debe tener 10 digitos'),
+  
+  body('avatar')
+    .optional()
+    .custom((value) => {
+      if (value && !value.startsWith('data:image/')) {
+        throw new Error('El avatar debe ser una imagen en formato base64');
+      }
+      return true;
+    }),
   
   validate,
 ];
 
 /**
  * Reglas de validacion para login
+ * Actualizado para aceptar numeroControl o email
  */
 const loginValidation = [
-  body('email')
+  body('numeroControl')
+    .optional()
     .trim()
-    .notEmpty().withMessage('El email es requerido')
+    .matches(/^\d{8}$/).withMessage('El numero de control debe tener 8 digitos'),
+  
+  body('email')
+    .optional()
+    .trim()
     .isEmail().withMessage('Email invalido')
     .normalizeEmail(),
   
@@ -67,35 +92,56 @@ const loginValidation = [
 ];
 
 /**
- * Reglas de validacion para actualizacion de perfil
- * ACTUALIZADO: Validacion mejorada para avatar en base64
+ * Reglas de validacion para actualizacion de perfil del TecNM
  */
 const updateProfileValidation = [
-  body('username')
+  body('nombreCompleto')
     .optional()
     .trim()
-    .isLength({ min: 3, max: 30 }).withMessage('El nombre de usuario debe tener entre 3 y 30 caracteres')
-    .matches(/^[a-zA-Z0-9_\-\s]+$/).withMessage('El nombre de usuario solo puede contener letras, numeros, espacios, guiones y guiones bajos'),
+    .isLength({ min: 3, max: 100 }).withMessage('El nombre completo debe tener entre 3 y 100 caracteres'),
   
-  // Avatar NO se valida aqui - se maneja en el controlador
-  // Esto permite manejar base64 de cualquier tamano sin problemas
-  
-  body('bio')
+  body('carrera')
     .optional()
     .trim()
-    .isLength({ max: 500 }).withMessage('La biografia no puede exceder 500 caracteres'),
+    .isIn(Object.values(CARRERAS)).withMessage('Carrera no valida'),
   
-  body('preferences')
+  body('semestre')
     .optional()
-    .isObject().withMessage('Las preferencias deben ser un objeto'),
+    .isInt({ min: 1, max: 12 }).withMessage('El semestre debe estar entre 1 y 12')
+    .toInt(),
   
-  body('preferences.theme')
+  body('telefono')
     .optional()
-    .isIn(['light', 'dark', 'auto']).withMessage('Tema invalido'),
+    .trim()
+    .custom((value) => {
+      if (value === null || value === '') return true;
+      if (!/^[0-9]{10}$/.test(value)) {
+        throw new Error('El telefono debe tener 10 digitos');
+      }
+      return true;
+    }),
   
-  body('preferences.language')
+  body('avatar')
     .optional()
-    .isIn(['es', 'en', 'fr', 'de', 'pt']).withMessage('Idioma invalido'),
+    .custom((value) => {
+      if (value === null) return true;
+      if (value && !value.startsWith('data:image/')) {
+        throw new Error('El avatar debe ser una imagen en formato base64');
+      }
+      return true;
+    }),
+  
+  body('numeroControl')
+    .optional()
+    .custom((value) => {
+      throw new Error('No se puede modificar el numero de control');
+    }),
+  
+  body('email')
+    .optional()
+    .custom((value) => {
+      throw new Error('No se puede modificar el email');
+    }),
   
   validate,
 ];
@@ -109,16 +155,12 @@ const changePasswordValidation = [
   
   body('newPassword')
     .notEmpty().withMessage('La nueva contraseña es requerida')
-    .isLength({ min: 8 }).withMessage('La contraseña debe tener al menos 8 caracteres')
-    .matches(/[A-Z]/).withMessage('La contraseña debe contener al menos una mayuscula')
-    .matches(/[a-z]/).withMessage('La contraseña debe contener al menos una minuscula')
-    .matches(/[0-9]/).withMessage('La contraseña debe contener al menos un numero')
-    .matches(/[@$!%*?&#]/).withMessage('La contraseña debe contener al menos un caracter especial'),
+    .isLength({ min: 6 }).withMessage('La contraseña debe tener al menos 6 caracteres'),
   
   body('confirmPassword')
-    .notEmpty().withMessage('La confirmacion de contraseña es requerida')
+    .optional()
     .custom((value, { req }) => {
-      if (value !== req.body.newPassword) {
+      if (value && value !== req.body.newPassword) {
         throw new Error('Las contraseñas no coinciden');
       }
       return true;
@@ -355,7 +397,6 @@ const validateFileSize = (maxSizeBytes) => {
  * Middleware para sanitizar inputs
  */
 const sanitizeInputs = (req, res, next) => {
-  // Sanitizar body
   if (req.body) {
     Object.keys(req.body).forEach(key => {
       if (typeof req.body[key] === 'string') {
@@ -364,7 +405,6 @@ const sanitizeInputs = (req, res, next) => {
     });
   }
   
-  // Sanitizar query params
   if (req.query) {
     Object.keys(req.query).forEach(key => {
       if (typeof req.query[key] === 'string') {

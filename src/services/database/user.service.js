@@ -58,6 +58,24 @@ class UserService {
   }
 
   /**
+   * Obtiene un usuario por numero de control (TecNM)
+   * @param {string} numeroControl - Numero de control del estudiante
+   * @returns {Promise<Object|null>} - Usuario encontrado
+   */
+  async getUserByNumeroControl(numeroControl) {
+    try {
+      if (!numeroControl) {
+        throw new Error('numeroControl es requerido');
+      }
+
+      const user = await User.findOne({ numeroControl }).select('-password');
+      return user;
+    } catch (error) {
+      throw new Error(`Error obteniendo usuario por numero de control: ${error.message}`);
+    }
+  }
+
+  /**
    * Obtiene un usuario por username
    * @param {string} username - Username del usuario
    * @returns {Promise<Object|null>} - Usuario encontrado
@@ -228,7 +246,7 @@ class UserService {
   }
 
   /**
-   * Busca usuarios por termino
+   * Busca usuarios por termino (TecNM: nombreCompleto, numeroControl, email)
    * @param {string} searchTerm - Termino de busqueda
    * @returns {Promise<Array>} - Usuarios encontrados
    */
@@ -240,7 +258,8 @@ class UserService {
 
       const users = await User.find({
         $or: [
-          { username: { $regex: searchTerm, $options: 'i' } },
+          { nombreCompleto: { $regex: searchTerm, $options: 'i' } },
+          { numeroControl: { $regex: searchTerm, $options: 'i' } },
           { email: { $regex: searchTerm, $options: 'i' } }
         ]
       }).select('-password').limit(20);
@@ -276,6 +295,30 @@ class UserService {
   }
 
   /**
+   * Verifica si un numero de control ya existe (TecNM)
+   * @param {string} numeroControl - Numero de control a verificar
+   * @param {string} excludeUserId - ID de usuario a excluir (opcional)
+   * @returns {Promise<boolean>} - true si existe
+   */
+  async numeroControlExists(numeroControl, excludeUserId = null) {
+    try {
+      if (!numeroControl) {
+        throw new Error('numeroControl es requerido');
+      }
+
+      const query = { numeroControl };
+      if (excludeUserId) {
+        query._id = { $ne: excludeUserId };
+      }
+
+      const user = await User.findOne(query);
+      return !!user;
+    } catch (error) {
+      throw new Error(`Error verificando numero de control: ${error.message}`);
+    }
+  }
+
+  /**
    * Verifica si un username ya existe
    * @param {string} username - Username a verificar
    * @param {string} excludeUserId - ID de usuario a excluir (opcional)
@@ -300,6 +343,33 @@ class UserService {
   }
 
   /**
+   * Obtiene usuarios por carrera (TecNM)
+   * @param {string} carrera - Nombre de la carrera
+   * @param {number} semestre - Semestre (opcional)
+   * @returns {Promise<Array>} - Usuarios encontrados
+   */
+  async getUsersByCarrera(carrera, semestre = null) {
+    try {
+      if (!carrera) {
+        throw new Error('carrera es requerida');
+      }
+
+      const query = { carrera };
+      if (semestre) {
+        query.semestre = semestre;
+      }
+
+      const users = await User.find(query)
+        .select('-password')
+        .sort({ nombreCompleto: 1 });
+
+      return users;
+    } catch (error) {
+      throw new Error(`Error obteniendo usuarios por carrera: ${error.message}`);
+    }
+  }
+
+  /**
    * Cuenta el total de usuarios
    * @returns {Promise<number>} - Total de usuarios
    */
@@ -309,6 +379,24 @@ class UserService {
       return count;
     } catch (error) {
       throw new Error(`Error contando usuarios: ${error.message}`);
+    }
+  }
+
+  /**
+   * Cuenta usuarios por carrera (TecNM)
+   * @param {string} carrera - Nombre de la carrera
+   * @returns {Promise<number>} - Total de usuarios en esa carrera
+   */
+  async countUsersByCarrera(carrera) {
+    try {
+      if (!carrera) {
+        throw new Error('carrera es requerida');
+      }
+
+      const count = await User.countDocuments({ carrera });
+      return count;
+    } catch (error) {
+      throw new Error(`Error contando usuarios por carrera: ${error.message}`);
     }
   }
 }

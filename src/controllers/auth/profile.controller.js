@@ -4,6 +4,9 @@ const userService = require('../../services/database/user.service');
 const passwordService = require('../../services/auth/password.service');
 const { validationResult } = require('express-validator');
 
+/**
+ * Obtener perfil del usuario autenticado
+ */
 const getProfile = async (req, res, next) => {
   try {
     const userId = req.user.id;
@@ -21,12 +24,17 @@ const getProfile = async (req, res, next) => {
       data: {
         user: {
           id: user._id,
-          username: user.username,
+          numeroControl: user.numeroControl,
           email: user.email,
+          nombreCompleto: user.nombreCompleto,
+          carrera: user.carrera,
+          semestre: user.semestre,
           avatar: user.avatar,
-          bio: user.bio || '',
+          telefono: user.telefono || null,
           role: user.role,
-          preferences: user.preferences,
+          isActive: user.isActive,
+          isVerified: user.isVerified,
+          lastLogin: user.lastLogin,
           createdAt: user.createdAt,
           updatedAt: user.updatedAt
         }
@@ -37,9 +45,11 @@ const getProfile = async (req, res, next) => {
   }
 };
 
+/**
+ * Actualizar perfil del usuario
+ */
 const updateProfile = async (req, res, next) => {
   try {
-    // Verificar errores de validacion
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       console.log('ERRORES DE VALIDACION DETECTADOS:');
@@ -57,9 +67,16 @@ const updateProfile = async (req, res, next) => {
     }
 
     const userId = req.user.id;
-    const { username, avatar, bio, preferences } = req.body;
+    const { nombreCompleto, carrera, semestre, avatar, telefono } = req.body;
 
-    // Verificar que no se intente cambiar el email
+    // Verificar que no se intenten cambiar campos inmutables
+    if (req.body.numeroControl !== undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'El numero de control no se puede modificar'
+      });
+    }
+
     if (req.body.email !== undefined) {
       return res.status(400).json({
         success: false,
@@ -69,19 +86,34 @@ const updateProfile = async (req, res, next) => {
 
     const updateData = {};
 
-    // Validar y actualizar username si se proporciona
-    if (username !== undefined) {
-      const existingUsername = await userService.getUserByUsername(username);
-      if (existingUsername && existingUsername._id.toString() !== userId) {
+    // Actualizar nombre completo
+    if (nombreCompleto !== undefined) {
+      if (nombreCompleto.trim().length < 3) {
         return res.status(400).json({
           success: false,
-          message: 'El nombre de usuario ya esta en uso'
+          message: 'El nombre debe tener al menos 3 caracteres'
         });
       }
-      updateData.username = username;
+      updateData.nombreCompleto = nombreCompleto.trim();
     }
 
-    // Actualizar avatar si se proporciona
+    // Actualizar carrera
+    if (carrera !== undefined) {
+      updateData.carrera = carrera;
+    }
+
+    // Actualizar semestre
+    if (semestre !== undefined) {
+      if (semestre < 1 || semestre > 12) {
+        return res.status(400).json({
+          success: false,
+          message: 'El semestre debe estar entre 1 y 12'
+        });
+      }
+      updateData.semestre = semestre;
+    }
+
+    // Actualizar avatar
     if (avatar !== undefined) {
       if (avatar === '' || avatar === null) {
         updateData.avatar = null;
@@ -95,20 +127,18 @@ const updateProfile = async (req, res, next) => {
       }
     }
 
-    // Actualizar bio si se proporciona
-    if (bio !== undefined) {
-      if (bio.length > 500) {
+    // Actualizar telefono
+    if (telefono !== undefined) {
+      if (telefono === '' || telefono === null) {
+        updateData.telefono = null;
+      } else if (!/^[0-9]{10}$/.test(telefono)) {
         return res.status(400).json({
           success: false,
-          message: 'La biografia no puede exceder 500 caracteres'
+          message: 'El telefono debe tener 10 digitos'
         });
+      } else {
+        updateData.telefono = telefono;
       }
-      updateData.bio = bio;
-    }
-
-    // Actualizar preferencias si se proporcionan
-    if (preferences !== undefined) {
-      updateData.preferences = preferences;
     }
 
     // Actualizar usuario
@@ -127,12 +157,14 @@ const updateProfile = async (req, res, next) => {
       data: {
         user: {
           id: updatedUser._id,
-          username: updatedUser.username,
+          numeroControl: updatedUser.numeroControl,
           email: updatedUser.email,
+          nombreCompleto: updatedUser.nombreCompleto,
+          carrera: updatedUser.carrera,
+          semestre: updatedUser.semestre,
           avatar: updatedUser.avatar,
-          bio: updatedUser.bio || '',
+          telefono: updatedUser.telefono || null,
           role: updatedUser.role,
-          preferences: updatedUser.preferences,
           updatedAt: updatedUser.updatedAt
         }
       }
@@ -142,8 +174,20 @@ const updateProfile = async (req, res, next) => {
   }
 };
 
+/**
+ * Cambiar contrasena del usuario
+ */
 const changePassword = async (req, res, next) => {
   try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Errores de validacion',
+        errors: errors.array()
+      });
+    }
+
     const userId = req.user.id;
     const { currentPassword, newPassword } = req.body;
 
@@ -181,8 +225,60 @@ const changePassword = async (req, res, next) => {
   }
 };
 
+/**
+ * Obtener usuario por numero de control (solo para admins)
+ */
+const getUserByNumeroControl = async (req, res, next) => {
+  try {
+    const { numeroControl } = req.params;
+
+    const user = await userService.getUserByNumeroControl(numeroControl);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuario no encontrado'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        user: user.toPublicJSON()
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Listar usuarios por carrera (solo para admins/profesores)
+ */
+const getUsersByCarrera = async (req, res, next) => {
+  try {
+    const { carrera } = req.params;
+    const { semestre } = req.query;
+
+    const User = require('../../models/User.model');
+    const users = await User.findByCarrera(carrera, semestre ? parseInt(semestre) : null);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        users: users.map(user => user.toPublicJSON()),
+        total: users.length
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getProfile,
   updateProfile,
-  changePassword
+  changePassword,
+  getUserByNumeroControl,
+  getUsersByCarrera
 };

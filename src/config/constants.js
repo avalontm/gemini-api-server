@@ -6,10 +6,37 @@
 
 // Roles de usuario
 const USER_ROLES = {
-  USER: 'user',
+  ALUMNO: 'alumno',
+  PROFESOR: 'profesor',
   ADMIN: 'admin',
-  MODERATOR: 'moderator',
 };
+
+/**
+ * Carreras del Tecnologico Nacional de Mexico Campus Ensenada
+ */
+const CARRERAS = [
+  'Ingeniería en Innovación Agrícola Sustentable',
+  'Ingeniería Electromecánica',
+  'Ingeniería Electrónica',
+  'Ingeniería en Gestión Empresarial',
+  'Ingeniería Industrial',
+  'Ingeniería Mecatrónica',
+  'Ingeniería en Sistemas Computacionales',
+  'Licenciatura en Administración',
+  'Ingeniería Industrial TecNM-Virtual',
+  'Ingeniería en Sistemas Computacionales TecNM-Virtual',
+  'Ingeniería Electromecánica en Playas de Rosarito',
+  'Ingeniería Industrial en Playas de Rosarito',
+  'Ingeniería en Sistemas Computacionales en Playas de Rosarito',
+  'Licenciatura en Administración en Playas de Rosarito',
+  'Ingeniería en Sistemas Computacionales en Tecate',
+  'Ingeniería Industrial en Tecate',
+  'Licenciatura en Administración en Tecate',
+  'Especialización en Industria Aeroespacial',
+  'Maestría en Ingeniería Aeroespacial',
+  'Maestría en Ciencias en Ingeniería Mecatrónica',
+  'Doctorado en Ciencias en Ingeniería Mecatrónica',
+];
 
 // Tipos de mensaje
 const MESSAGE_TYPES = {
@@ -248,10 +275,12 @@ const SESSION_CONFIG = {
 
 module.exports = {
   USER_ROLES,
+  CARRERAS, 
   MESSAGE_TYPES,
   MESSAGE_ROLES,
   MIME_TYPES,
   FILE_EXTENSIONS,
+  FILE_SIZE_LIMITS,
   FILE_SIZE_LIMITS,
   CONTENT_LIMITS,
   HTTP_STATUS,
