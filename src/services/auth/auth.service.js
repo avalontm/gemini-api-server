@@ -6,14 +6,6 @@ const tokenService = require('./token.service');
 const sessionService = require('./session.service');
 
 class AuthService {
-  /**
-   * Registra un nuevo usuario
-   * @param {Object} userData - Datos del usuario
-   * @param {string} userData.username - Nombre de usuario
-   * @param {string} userData.email - Email del usuario
-   * @param {string} userData.password - Contrasena en texto plano
-   * @returns {Promise<Object>} - Usuario creado y token
-   */
   async register(userData) {
     try {
       const { username, email, password } = userData;
@@ -72,15 +64,6 @@ class AuthService {
     }
   }
 
-  /**
-   * Autentica un usuario
-   * @param {Object} credentials - Credenciales
-   * @param {string} credentials.email - Email del usuario
-   * @param {string} credentials.password - Contrasena en texto plano
-   * @param {string} ipAddress - Direccion IP del cliente
-   * @param {string} userAgent - User agent del navegador
-   * @returns {Promise<Object>} - Usuario y token
-   */
   async login(credentials, ipAddress, userAgent) {
     try {
       const { email, password } = credentials;
@@ -104,6 +87,14 @@ class AuthService {
         throw new Error('Credenciales invalidas');
       }
 
+      if (!user.isVerified) {
+        throw new Error('Por favor verifica tu correo electronico antes de iniciar sesion. Revisa tu bandeja de entrada.');
+      }
+
+      if (!user.isActive) {
+        throw new Error('Tu cuenta ha sido desactivada. Contacta a servicios escolares.');
+      }
+
       const token = tokenService.generateToken({
         id: user._id,
         email: user.email,
@@ -117,6 +108,8 @@ class AuthService {
         userAgent
       });
 
+      await user.updateLastLogin();
+
       const userResponse = user.toObject();
       delete userResponse.password;
 
@@ -129,11 +122,6 @@ class AuthService {
     }
   }
 
-  /**
-   * Cierra la sesion de un usuario
-   * @param {string} token - Token JWT
-   * @returns {Promise<boolean>} - true si se cerro exitosamente
-   */
   async logout(token) {
     try {
       if (!token) {
@@ -149,11 +137,6 @@ class AuthService {
     }
   }
 
-  /**
-   * Verifica un token y devuelve el usuario
-   * @param {string} token - Token JWT
-   * @returns {Promise<Object>} - Usuario autenticado
-   */
   async verifyAuth(token) {
     try {
       if (!token) {
@@ -179,13 +162,6 @@ class AuthService {
     }
   }
 
-  /**
-   * Cambia la contrasena de un usuario
-   * @param {string} userId - ID del usuario
-   * @param {string} currentPassword - Contrasena actual
-   * @param {string} newPassword - Nueva contrasena
-   * @returns {Promise<boolean>} - true si se cambio exitosamente
-   */
   async changePassword(userId, currentPassword, newPassword) {
     try {
       if (!userId || !currentPassword || !newPassword) {
@@ -229,11 +205,6 @@ class AuthService {
     }
   }
 
-  /**
-   * Refresca un token expirado usando refresh token
-   * @param {string} refreshToken - Refresh token
-   * @returns {Promise<Object>} - Nuevo token
-   */
   async refreshToken(refreshToken) {
     try {
       if (!refreshToken) {
@@ -266,11 +237,6 @@ class AuthService {
     }
   }
 
-  /**
-   * Obtiene el perfil del usuario autenticado
-   * @param {string} userId - ID del usuario
-   * @returns {Promise<Object>} - Perfil del usuario
-   */
   async getProfile(userId) {
     try {
       if (!userId) {
@@ -289,12 +255,6 @@ class AuthService {
     }
   }
 
-  /**
-   * Actualiza el perfil del usuario
-   * @param {string} userId - ID del usuario
-   * @param {Object} updates - Datos a actualizar
-   * @returns {Promise<Object>} - Usuario actualizado
-   */
   async updateProfile(userId, updates) {
     try {
       if (!userId) {

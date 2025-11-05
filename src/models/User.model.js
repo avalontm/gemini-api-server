@@ -146,6 +146,17 @@ const userSchema = new mongoose.Schema(
       default: null,
       select: false,
     },
+    emailVerificationToken: {
+      type: String,
+      default: null,
+      select: false,
+    },
+    
+    emailVerificationExpire: {
+      type: Date,
+      default: null,
+      select: false,
+    },
   },
   {
     timestamps: true,
@@ -314,6 +325,19 @@ userSchema.statics.findByCarrera = function (carrera, semestre = null) {
 userSchema.methods.updateLastLogin = function () {
   this.lastLogin = Date.now();
   return this.save({ validateBeforeSave: false });
+};
+
+userSchema.methods.generateEmailVerificationToken = function () {
+  const verificationToken = crypto.randomBytes(32).toString('hex');
+  
+  this.emailVerificationToken = crypto
+    .createHash('sha256')
+    .update(verificationToken)
+    .digest('hex');
+  
+  this.emailVerificationExpire = Date.now() + 24 * 60 * 60 * 1000; // 24 horas
+  
+  return verificationToken;
 };
 
 userSchema.pre('remove', async function (next) {

@@ -405,6 +405,151 @@ class EmailService {
       text: `Hola ${nombreCompleto}, bienvenido a Gemini Chat TecNM!`,
     });
   }
+
+  async sendVerificationEmail(email, verificationToken, nombreCompleto) {
+    const verificationUrl = `${process.env.FRONTEND_URL}/verify-email/${verificationToken}`;
+    
+    const subject = 'Verifica tu cuenta - TecNM Campus Ensenada';
+    
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+          }
+          .container {
+            background-color: #f9fafb;
+            border-radius: 10px;
+            padding: 30px;
+            border: 1px solid #e5e7eb;
+          }
+          .header {
+            text-align: center;
+            margin-bottom: 30px;
+          }
+          .logo {
+            background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 20px;
+          }
+          .content {
+            background-color: white;
+            padding: 25px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+          }
+          .button {
+            display: inline-block;
+            background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
+            color: white;
+            padding: 14px 28px;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: bold;
+            margin: 20px 0;
+          }
+          .warning {
+            background-color: #dbeafe;
+            border-left: 4px solid #3b82f6;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+          }
+          .footer {
+            text-align: center;
+            color: #6b7280;
+            font-size: 14px;
+            margin-top: 30px;
+          }
+          .divider {
+            height: 1px;
+            background-color: #e5e7eb;
+            margin: 25px 0;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <div class="logo">
+              TecNM Campus Ensenada
+            </div>
+            <h1 style="color: #1f2937; margin: 0;">Verifica tu Cuenta</h1>
+          </div>
+
+          <div class="content">
+            <p>Hola <strong>${nombreCompleto}</strong>,</p>
+            
+            <p>Gracias por registrarte en Gemini Chat TecNM. Para completar tu registro y comenzar a usar la plataforma, necesitas verificar tu cuenta.</p>
+            
+            <p>Haz clic en el siguiente boton para verificar tu correo electronico:</p>
+            
+            <div style="text-align: center;">
+              <a href="${verificationUrl}" class="button">Verificar mi Cuenta</a>
+            </div>
+            
+            <p>O copia y pega el siguiente enlace en tu navegador:</p>
+            <p style="background-color: #f3f4f6; padding: 12px; border-radius: 6px; word-break: break-all; font-size: 14px;">
+              ${verificationUrl}
+            </p>
+
+            <div class="warning">
+              <strong>Importante:</strong> Este enlace expirara en 24 horas. Si no verificas tu cuenta en este tiempo, tendras que registrarte nuevamente.
+            </div>
+
+            <div class="divider"></div>
+
+            <p style="font-size: 14px; color: #6b7280;">
+              Si no creaste esta cuenta, puedes ignorar este correo de forma segura.
+            </p>
+          </div>
+
+          <div class="footer">
+            <p><strong>Tecnologico Nacional de Mexico</strong><br>Campus Ensenada</p>
+            <p style="font-size: 12px;">
+              Este es un correo automatico, por favor no respondas a este mensaje.
+            </p>
+            <p style="font-size: 12px;">
+              Si tienes problemas, contacta a servicios escolares.
+            </p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const text = `
+      Hola ${nombreCompleto},
+
+      Gracias por registrarte en Gemini Chat TecNM. Para completar tu registro, verifica tu cuenta visitando el siguiente enlace:
+      ${verificationUrl}
+
+      Este enlace expirara en 24 horas.
+
+      Si no creaste esta cuenta, puedes ignorar este correo de forma segura.
+
+      Tecnologico Nacional de Mexico - Campus Ensenada
+    `;
+
+    return await this.sendEmail({
+      to: email,
+      subject,
+      html,
+      text,
+    });
+  }
 }
 
 module.exports = new EmailService();

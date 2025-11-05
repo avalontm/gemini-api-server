@@ -1,19 +1,18 @@
 // src/controllers/auth/register.controller.js
 
 const User = require('../../models/User.model');
-const tokenService = require('../../services/auth/token.service');
+const emailService = require('../../services/email/email.service');
 const { validationResult } = require('express-validator');
 const { CARRERAS } = require('../../config/constants');
 
 const register = async (req, res, next) => {
   try {
-    // Verificar errores de express-validator primero
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      console.log('Errores de validación:', errors.array());
+      console.log('Errores de validacion:', errors.array());
       return res.status(400).json({
         success: false,
-        message: 'Errores de validación',
+        message: 'Errores de validacion',
         errors: errors.array()
       });
     }
@@ -28,7 +27,6 @@ const register = async (req, res, next) => {
       avatar 
     } = req.body;
 
-    // Log para debugging
     console.log('Datos recibidos:', {
       numeroControl,
       nombreCompleto,
@@ -38,25 +36,22 @@ const register = async (req, res, next) => {
       tieneAvatar: !!avatar
     });
 
-    // Validación de número de control
     if (!numeroControl || !/^\d{8}$/.test(numeroControl.toString())) {
       return res.status(400).json({
         success: false,
-        message: 'El número de control debe tener 8 dígitos'
+        message: 'El numero de control debe tener 8 digitos'
       });
     }
 
-    // Validación de carrera
     const carrerasValidas = Object.values(CARRERAS);
     if (!carrerasValidas.includes(carrera)) {
       return res.status(400).json({
         success: false,
-        message: 'Carrera no válida',
+        message: 'Carrera no valida',
         carrerasDisponibles: carrerasValidas
       });
     }
 
-    // Validación de semestre
     const semestreNum = parseInt(semestre);
     if (isNaN(semestreNum) || semestreNum < 1 || semestreNum > 12) {
       return res.status(400).json({
@@ -65,53 +60,47 @@ const register = async (req, res, next) => {
       });
     }
 
-    // Verificar si el número de control ya existe
     const existingNumeroControl = await User.findByNumeroControl(numeroControl);
     if (existingNumeroControl) {
       return res.status(400).json({
         success: false,
-        message: 'El número de control ya está registrado'
+        message: 'El numero de control ya esta registrado'
       });
     }
 
-    // Generar email automáticamente
     const email = `al${numeroControl}@ite.edu.mx`;
 
-    // Verificar si el email ya existe (por si acaso)
     const existingEmail = await User.findByEmail(email);
     if (existingEmail) {
       return res.status(400).json({
         success: false,
-        message: 'El email ya está registrado'
+        message: 'El email ya esta registrado'
       });
     }
 
-    // Validación de teléfono (opcional)
     if (telefono && !/^[0-9]{10}$/.test(telefono)) {
       return res.status(400).json({
         success: false,
-        message: 'El teléfono debe tener 10 dígitos'
+        message: 'El telefono debe tener 10 digitos'
       });
     }
 
-    // Validación de avatar (opcional)
     if (avatar && !avatar.startsWith('data:image/')) {
       return res.status(400).json({
         success: false,
-        message: 'Formato de avatar inválido. Debe ser una imagen en base64'
+        message: 'Formato de avatar invalido. Debe ser una imagen en base64'
       });
     }
 
-    // Preparar datos del usuario
     const userData = {
       numeroControl: numeroControl.toString(),
       password,
       nombreCompleto: nombreCompleto.trim(),
       carrera,
       semestre: semestreNum,
+      isVerified: false,
     };
 
-    // Agregar campos opcionales solo si están presentes
     if (telefono) {
       userData.telefono = telefono;
     }
@@ -127,35 +116,30 @@ const register = async (req, res, next) => {
       semestre: userData.semestre
     });
 
-    // Crear usuario
     const newUser = await User.create(userData);
 
     console.log('Usuario creado exitosamente:', newUser._id);
 
-    // Generar token
-    const token = tokenService.generateToken({
-      id: newUser._id,
-      numeroControl: newUser.numeroControl,
-      email: newUser.email,
-      role: newUser.role
-    });
+    const verificationToken = newUser.generateEmailVerificationToken();
+    await newUser.save({ validateBeforeSave: false });
 
-    // Configurar cookie
-    const cookieOptions = {
-      expires: new Date(
-        Date.now() + (process.env.JWT_COOKIE_EXPIRE || 7) * 24 * 60 * 60 * 1000
-      ),
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict'
-    };
+    console.log('Token de verificacion generado');
 
-    res.cookie('token', token, cookieOptions);
+    const emailResult = await emailService.sendVerificationEmail(
+      newUser.email,
+      verificationToken,
+      newUser.nombreCompleto
+    );
 
-    // Respuesta exitosa
+    if (!emailResult.success) {
+      console.error('Error enviando email de verificacion:', emailResult.error);
+    } else {
+      console.log('Email de verificacion enviado exitosamente');
+    }
+
     res.status(201).json({
       success: true,
-      message: 'Usuario registrado exitosamente',
+      message: 'Usuario registrado exitosamente. Por favor verifica tu correo electronico para activar tu cuenta.',
       data: {
         user: {
           id: newUser._id,
@@ -171,32 +155,29 @@ const register = async (req, res, next) => {
           isVerified: newUser.isVerified,
           createdAt: newUser.createdAt
         },
-        token
+        requiresVerification: true
       }
     });
   } catch (error) {
     console.error('Error en registro:', error);
 
-    // Error de validación de Mongoose
     if (error.name === 'ValidationError') {
       const messages = Object.values(error.errors).map(err => err.message);
       return res.status(400).json({
         success: false,
-        message: 'Error de validación',
+        message: 'Error de validacion',
         errors: messages
       });
     }
 
-    // Error de duplicado (índice único)
     if (error.code === 11000) {
       const field = Object.keys(error.keyPattern)[0];
       return res.status(400).json({
         success: false,
-        message: `El ${field} ya está registrado`
+        message: `El ${field} ya esta registrado`
       });
     }
 
-    // Otros errores
     next(error);
   }
 };
