@@ -16,7 +16,7 @@ class SwaggerGeneratorService {
         description: 'API server for Gemini AI integration with user authentication and conversation management',
         contact: {
           name: 'API Support',
-          email: 'support@example.com'
+          email: 'avalontm21@gmail.com'
         },
         license: {
           name: 'MIT',

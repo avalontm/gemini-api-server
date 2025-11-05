@@ -1,6 +1,14 @@
 // src/services/gemini/geminiClient.service.js
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { 
+  ACADEMIC_SYSTEM_INSTRUCTIONS, 
+  DEFAULT_ACADEMIC_CONFIG,
+  AREA_SPECIFIC_CONTEXTS 
+} = require('../../config/academicContext.config');
+const conversationService = require('../database/conversation.service');
+const messageService = require('../database/message.service');
+const logger = require('../../utils/logger');
 
 class GeminiClientService {
   constructor() {
@@ -46,22 +54,94 @@ class GeminiClientService {
   }
 
   /**
-   * Inicializa el modelo generativo
-   * @param {Object} config - Configuracion del modelo
+   * Obtiene la API key apropiada para un usuario
+   * @param {Object} user - Usuario de Mongoose
+   * @returns {string|null} - API key a usar
+   */
+  getApiKeyForUser(user) {
+    if (!user) {
+      return this.defaultApiKey;
+    }
+
+    // Si el usuario tiene metodo getGeminiApiKey, usarlo
+    if (typeof user.getGeminiApiKey === 'function') {
+      const personalKey = user.getGeminiApiKey();
+      if (personalKey) {
+        logger.info('Usando API key personal del usuario', { userId: user._id || user.id });
+        return personalKey;
+      }
+    }
+
+    // Si el usuario tiene preferencias y API key personal
+    if (user.preferences?.usePersonalApiKey && user.geminiApiKey) {
+      const decryptedKey = user.decryptApiKey ? user.decryptApiKey(user.geminiApiKey) : user.geminiApiKey;
+      if (decryptedKey) {
+        logger.info('Usando API key personal del usuario (preferences)', { userId: user._id || user.id });
+        return decryptedKey;
+      }
+    }
+
+    logger.info('Usando API key del servidor', { userId: user._id || user.id });
+    return this.defaultApiKey;
+  }
+
+  /**
+   * Inicializa el modelo generativo con contexto academico
+   * @param {Object} options - Opciones de configuracion
    * @param {string} apiKey - API key a usar (opcional)
    * @returns {Object} - Modelo generativo
    */
-  initializeModel(config = {}, apiKey = null) {
+  initializeModel(options = {}, apiKey = null) {
     try {
       const client = this.getClient(apiKey);
       
-      const defaultConfig = {
+      const {
+        systemInstruction = ACADEMIC_SYSTEM_INSTRUCTIONS,
+        area = null,
+        additionalContext = '',
+        config = {}
+      } = options;
+
+      // Construir instrucciones completas
+      let fullInstructions = systemInstruction;
+      
+      if (area && AREA_SPECIFIC_CONTEXTS[area]) {
+        fullInstructions += '\n\n' + AREA_SPECIFIC_CONTEXTS[area];
+        logger.info('Agregando contexto especifico de area', { area });
+      }
+      
+      if (additionalContext) {
+        fullInstructions += '\n\nCONTEXTO ADICIONAL:\n' + additionalContext;
+        logger.info('Agregando contexto adicional', { 
+          contextLength: additionalContext.length 
+        });
+      }
+
+      // LOG DETALLADO: Mostrar las instrucciones que se estan enviando
+      logger.info('Inicializando modelo con instrucciones academicas', {
         model: this.model,
+        area: area || 'general',
+        hasAdditionalContext: !!additionalContext,
+        instructionsLength: fullInstructions.length,
+        temperature: config.temperature || DEFAULT_ACADEMIC_CONFIG.temperature,
+        maxOutputTokens: config.maxOutputTokens || DEFAULT_ACADEMIC_CONFIG.maxOutputTokens
+      });
+
+      // LOG VERBOSE: Mostrar primeros 500 caracteres de las instrucciones
+      if (process.env.LOG_LEVEL === 'verbose' || process.env.NODE_ENV === 'development') {
+        logger.debug('Primeros 500 caracteres de system instructions:', {
+          preview: fullInstructions.substring(0, 500) + '...'
+        });
+      }
+
+      const modelConfig = {
+        model: this.model,
+        systemInstruction: fullInstructions,
         generationConfig: {
-          temperature: config.temperature || 0.7,
-          topK: config.topK || 40,
-          topP: config.topP || 0.95,
-          maxOutputTokens: config.maxOutputTokens || 2048,
+          temperature: config.temperature || DEFAULT_ACADEMIC_CONFIG.temperature,
+          topK: config.topK || DEFAULT_ACADEMIC_CONFIG.topK,
+          topP: config.topP || DEFAULT_ACADEMIC_CONFIG.topP,
+          maxOutputTokens: config.maxOutputTokens || DEFAULT_ACADEMIC_CONFIG.maxOutputTokens,
         },
         safetySettings: [
           {
@@ -83,50 +163,311 @@ class GeminiClientService {
         ]
       };
 
-      return client.getGenerativeModel(defaultConfig);
+      logger.info('Modelo inicializado exitosamente', {
+        model: this.model,
+        configApplied: true
+      });
+
+      return client.getGenerativeModel(modelConfig);
     } catch (error) {
+      logger.error('Error inicializando modelo:', error);
       throw new Error(`Error inicializando modelo: ${error.message}`);
     }
   }
 
   /**
-   * Obtiene el modelo generativo
+   * Obtiene el modelo generativo (metodo legado, mantener compatibilidad)
    * @param {Object} config - Configuracion del modelo
    * @param {string} apiKey - API key a usar (opcional)
    * @returns {Object} - Modelo generativo
    */
   getModel(config = {}, apiKey = null) {
-    return this.initializeModel(config, apiKey);
+    return this.initializeModel({ config }, apiKey);
   }
 
   /**
-   * Genera contenido a partir de un prompt de texto
+   * Construir historial de conversacion para Gemini
+   * @param {string} conversationId - ID de la conversacion
+   * @param {number} maxMessages - Maximo de mensajes a incluir
+   * @returns {Promise<Array>} - Historial formateado
+   */
+  async buildConversationHistory(conversationId, maxMessages = 20) {
+    try {
+      const messages = await messageService.getMessagesByConversation(
+        conversationId,
+        { limit: maxMessages, sort: { createdAt: 1 } }
+      );
+
+      // Convertir al formato de Gemini
+      const history = messages.map(msg => ({
+        role: msg.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: msg.content }]
+      }));
+
+      logger.info('Historial construido', { 
+        conversationId, 
+        messagesCount: history.length 
+      });
+
+      return history;
+    } catch (error) {
+      logger.error('Error construyendo historial:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Genera contenido con contexto academico
    * @param {string} prompt - Texto del prompt
-   * @param {Object} config - Configuracion del modelo
+   * @param {Object} options - Opciones de configuracion
    * @param {string} apiKey - API key a usar (opcional)
    * @returns {Promise<Object>} - Respuesta generada
    */
-  async generateContent(prompt, config = {}, apiKey = null) {
+  async generateContent(prompt, options = {}, apiKey = null) {
     try {
       if (!prompt || typeof prompt !== 'string') {
         throw new Error('Prompt invalido');
       }
 
-      const model = this.getModel(config, apiKey);
+      const model = this.initializeModel(options, apiKey);
       const result = await model.generateContent(prompt);
-      const response = await result.response;
+      const response = result.response;
       const text = response.text();
 
       return {
         text,
+        tokens: {
+          prompt: response.usageMetadata?.promptTokenCount || 0,
+          completion: response.usageMetadata?.candidatesTokenCount || 0,
+          total: response.usageMetadata?.totalTokenCount || 0
+        },
         response: response,
         candidates: response.candidates,
-        promptFeedback: response.promptFeedback
+        promptFeedback: response.promptFeedback,
+        finishReason: response.candidates?.[0]?.finishReason || 'STOP'
       };
     } catch (error) {
+      logger.error('Error generando contenido:', error);
       throw new Error(`Error generando contenido: ${error.message}`);
     }
   }
+
+  /**
+   * Genera respuesta con historial de conversacion
+   * @param {string} conversationId - ID de la conversacion
+   * @param {string} prompt - Texto del prompt
+   * @param {string} userId - ID del usuario
+   * @param {Object} options - Opciones de configuracion
+   * @returns {Promise<Object>} - Respuesta generada
+   */
+  async generateWithHistory(conversationId, prompt, userId, options = {}) {
+    try {
+      // Obtener API key del usuario si esta disponible
+      const user = options.user || null;
+      const apiKey = user ? this.getApiKeyForUser(user) : this.defaultApiKey;
+
+      const model = this.initializeModel(options, apiKey);
+      
+      // Obtener historial existente
+      const history = await this.buildConversationHistory(conversationId);
+      
+      // Iniciar chat con historial
+      const chat = model.startChat({
+        history: history,
+        generationConfig: options.config || DEFAULT_ACADEMIC_CONFIG
+      });
+
+      logger.info('Chat iniciado con historial', { 
+        conversationId, 
+        historyLength: history.length 
+      });
+
+      // Enviar mensaje
+      const result = await chat.sendMessage(prompt);
+      const response = result.response;
+      const text = response.text();
+
+      // Guardar mensaje del usuario
+      const userTokens = await this.countTokens(prompt);
+      await messageService.createMessage({
+        conversationId,
+        role: 'user',
+        content: prompt,
+        type: 'text',
+        tokens: userTokens
+      });
+
+      // Guardar respuesta del asistente
+      const assistantTokens = response.usageMetadata?.candidatesTokenCount || 
+                              response.usageMetadata?.totalTokenCount || 
+                              await this.countTokens(text);
+      
+      const assistantMessage = await messageService.createMessage({
+        conversationId,
+        role: 'assistant',
+        content: text,
+        type: 'text',
+        tokens: assistantTokens
+      });
+
+      // Actualizar conversacion
+      await conversationService.updateConversation(conversationId, userId, {
+        updatedAt: new Date(),
+        lastMessageAt: new Date()
+      });
+
+      return {
+        conversationId,
+        messageId: assistantMessage._id,
+        response: text,
+        tokens: {
+          prompt: response.usageMetadata?.promptTokenCount || 0,
+          completion: response.usageMetadata?.candidatesTokenCount || 0,
+          total: response.usageMetadata?.totalTokenCount || 0
+        },
+        metadata: {
+          historyLength: history.length,
+          totalMessages: history.length + 2,
+          usingPersonalApiKey: apiKey !== this.defaultApiKey
+        }
+      };
+    } catch (error) {
+      logger.error('Error generando con historial:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Genera respuesta con streaming y historial
+   * @param {string} conversationId - ID de la conversacion
+   * @param {string} prompt - Texto del prompt
+   * @param {string} userId - ID del usuario
+   * @param {Object} options - Opciones de configuracion
+   * @returns {Promise<Object>} - Respuesta generada con streaming
+   */
+  async streamWithHistory(conversationId, prompt, userId, options = {}) {
+    try {
+      // Obtener API key del usuario si esta disponible
+      const user = options.user || null;
+      const apiKey = user ? this.getApiKeyForUser(user) : this.defaultApiKey;
+
+      const model = this.initializeModel(options, apiKey);
+      const history = await this.buildConversationHistory(conversationId);
+      
+      const chat = model.startChat({
+        history: history,
+        generationConfig: options.config || DEFAULT_ACADEMIC_CONFIG
+      });
+
+      const result = await chat.sendMessageStream(prompt);
+      
+      let fullText = '';
+      let chunks = 0;
+
+      // Guardar mensaje del usuario inmediatamente
+      const userTokens = await this.countTokens(prompt);
+      await messageService.createMessage({
+        conversationId,
+        role: 'user',
+        content: prompt,
+        type: 'text',
+        tokens: userTokens
+      });
+
+      // Procesar stream
+      for await (const chunk of result.stream) {
+        const chunkText = chunk.text();
+        fullText += chunkText;
+        chunks++;
+
+        // Callback para enviar chunk al cliente
+        if (options.onChunk) {
+          options.onChunk({
+            chunk: chunkText,
+            conversationId,
+            chunkNumber: chunks
+          });
+        }
+      }
+
+      // Obtener metadata final
+      const finalResponse = await result.response;
+
+      // Guardar respuesta completa
+      const assistantTokens = finalResponse.usageMetadata?.candidatesTokenCount || 
+                              finalResponse.usageMetadata?.totalTokenCount || 
+                              await this.countTokens(fullText);
+      
+      const assistantMessage = await messageService.createMessage({
+        conversationId,
+        role: 'assistant',
+        content: fullText,
+        type: 'text',
+        tokens: assistantTokens
+      });
+
+      await conversationService.updateConversation(conversationId, userId, {
+        updatedAt: new Date(),
+        lastMessageAt: new Date()
+      });
+
+      return {
+        conversationId,
+        messageId: assistantMessage._id,
+        response: fullText,
+        chunks,
+        tokens: {
+          prompt: finalResponse.usageMetadata?.promptTokenCount || 0,
+          completion: finalResponse.usageMetadata?.candidatesTokenCount || 0,
+          total: finalResponse.usageMetadata?.totalTokenCount || 0
+        },
+        metadata: {
+          historyLength: history.length,
+          totalMessages: history.length + 2,
+          usingPersonalApiKey: apiKey !== this.defaultApiKey
+        }
+      };
+    } catch (error) {
+      logger.error('Error en streaming con historial:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Crear nueva conversacion academica
+   * @param {string} userId - ID del usuario
+   * @param {string} title - Titulo de la conversacion
+   * @param {string} area - Area academica (opcional)
+   * @returns {Promise<Object>} - Conversacion creada
+   */
+  async createAcademicConversation(userId, title, area = null) {
+    try {
+      const conversation = await conversationService.createConversation({
+        userId,
+        title: title || 'Nueva Consulta Academica',
+        tags: ['academico', area].filter(Boolean),
+        metadata: {
+          area: area,
+          academicMode: true,
+          createdBy: 'academic-assistant'
+        }
+      });
+
+      logger.info('Conversacion academica creada', { 
+        conversationId: conversation._id || conversation.id,
+        area 
+      });
+
+      return conversation;
+    } catch (error) {
+      logger.error('Error creando conversacion academica:', error);
+      throw error;
+    }
+  }
+
+  // ============================================
+  // METODOS LEGADOS (Mantener compatibilidad)
+  // ============================================
 
   /**
    * Genera contenido con streaming
@@ -395,7 +736,8 @@ class GeminiClientService {
     return {
       model: this.model,
       defaultApiKeyConfigured: !!this.defaultApiKey,
-      cachedClients: this.clientCache.size
+      cachedClients: this.clientCache.size,
+      academicModeEnabled: true
     };
   }
 
@@ -404,29 +746,7 @@ class GeminiClientService {
    */
   clearClientCache() {
     this.clientCache.clear();
-  }
-
-  /**
-   * Obtiene la API key apropiada para un usuario
-   * @param {Object} user - Usuario de Mongoose
-   * @returns {string|null} - API key a usar
-   */
-  getApiKeyForUser(user) {
-    if (!user) {
-      return this.defaultApiKey;
-    }
-
-    // Si el usuario tiene metodo getGeminiApiKey, usarlo
-    if (typeof user.getGeminiApiKey === 'function') {
-      return user.getGeminiApiKey();
-    }
-
-    // Si el usuario tiene preferencias y API key personal
-    if (user.preferences?.usePersonalApiKey && user.geminiApiKey) {
-      return user.decryptApiKey ? user.decryptApiKey(user.geminiApiKey) : null;
-    }
-
-    return this.defaultApiKey;
+    logger.info('Cache de clientes limpiado');
   }
 }
 

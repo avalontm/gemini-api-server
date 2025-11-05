@@ -82,6 +82,17 @@ const conversationSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    
+    metadata: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+      validate: {
+        validator: function(v) {
+          return typeof v === 'object' && v !== null;
+        },
+        message: 'Metadata debe ser un objeto'
+      }
+    }
   },
   {
     timestamps: true,
@@ -97,16 +108,24 @@ conversationSchema.index({ userId: 1, createdAt: -1 });
 conversationSchema.index({ userId: 1, isPinned: -1, lastMessageAt: -1 });
 conversationSchema.index({ userId: 1, isArchived: 1 });
 conversationSchema.index({ tags: 1 });
+conversationSchema.index({ 'metadata.area': 1 });
+conversationSchema.index({ 'metadata.academicMode': 1 });
 
 /**
  * Virtual para obtener numero de mensajes
  */
 conversationSchema.virtual('messagesCount').get(function () {
-  // Si messages no está definido o no es un array, retornar messageCount del schema
   if (!this.messages || !Array.isArray(this.messages)) {
     return this.messageCount || 0;
   }
   return this.messages.length;
+});
+
+/**
+ * Virtual para verificar si es conversacion academica
+ */
+conversationSchema.virtual('isAcademic').get(function () {
+  return this.metadata?.academicMode === true || this.tags.includes('academico');
 });
 
 /**
@@ -141,6 +160,42 @@ conversationSchema.methods.removeMessage = async function (messageId) {
 conversationSchema.methods.updateTokenUsage = async function (tokens, cost = 0) {
   this.tokenUsage.total += tokens;
   this.tokenUsage.estimatedCost += cost;
+  return await this.save();
+};
+
+/**
+ * Metodo de instancia: actualizar metadata
+ * @param {Object} metadataUpdates - Actualizaciones de metadata
+ * @returns {Promise<Object>} - Conversacion actualizada
+ */
+conversationSchema.methods.updateMetadata = async function (metadataUpdates) {
+  this.metadata = {
+    ...this.metadata,
+    ...metadataUpdates,
+    updatedAt: new Date()
+  };
+  return await this.save();
+};
+
+/**
+ * Metodo de instancia: establecer area academica
+ * @param {string} area - Area academica
+ * @returns {Promise<Object>} - Conversacion actualizada
+ */
+conversationSchema.methods.setAcademicArea = async function (area) {
+  if (!this.metadata) {
+    this.metadata = {};
+  }
+  this.metadata.area = area;
+  this.metadata.academicMode = true;
+  
+  if (!this.tags.includes('academico')) {
+    this.tags.push('academico');
+  }
+  if (area && !this.tags.includes(area)) {
+    this.tags.push(area);
+  }
+  
   return await this.save();
 };
 
@@ -243,6 +298,28 @@ conversationSchema.statics.findByTag = function (userId, tag) {
 };
 
 /**
+ * Metodo estatico: buscar conversaciones academicas
+ * @param {string} userId - ID del usuario
+ * @param {string} area - Area academica (opcional)
+ * @returns {Promise<Array>} - Lista de conversaciones academicas
+ */
+conversationSchema.statics.findAcademic = function (userId, area = null) {
+  const query = { 
+    userId, 
+    $or: [
+      { 'metadata.academicMode': true },
+      { tags: 'academico' }
+    ]
+  };
+  
+  if (area) {
+    query['metadata.area'] = area;
+  }
+  
+  return this.find(query).sort({ lastMessageAt: -1 });
+};
+
+/**
  * Metodo estatico: contar conversaciones por usuario
  * @param {string} userId - ID del usuario
  * @param {boolean} isArchived - Filtrar archivadas
@@ -257,7 +334,6 @@ conversationSchema.statics.countByUserId = function (userId, isArchived = false)
  */
 conversationSchema.pre('remove', async function (next) {
   try {
-    // Eliminar todos los mensajes de esta conversacion
     await this.model('Message').deleteMany({ conversationId: this._id });
     next();
   } catch (error) {
@@ -271,6 +347,16 @@ conversationSchema.pre('remove', async function (next) {
 conversationSchema.pre('save', function (next) {
   if (this.isModified('messages')) {
     this.messageCount = this.messages.length;
+  }
+  next();
+});
+
+/**
+ * Middleware pre-save: inicializar metadata si no existe
+ */
+conversationSchema.pre('save', function (next) {
+  if (!this.metadata) {
+    this.metadata = {};
   }
   next();
 });

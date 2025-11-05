@@ -35,10 +35,8 @@ console.log('\n=== IMPORTANDO RUTAS ===');
 const authRoutes = safeImport('./auth/auth.routes', 'authRoutes');
 const healthRoutes = safeImport('./api/health.routes', 'healthRoutes');
 const textRoutes = safeImport('./api/text.routes', 'textRoutes');
-const imageRoutes = safeImport('./api/image.routes', 'imageRoutes');
 const voiceRoutes = safeImport('./api/voice.routes', 'voiceRoutes');
 const multimodalRoutes = safeImport('./api/multimodal.routes', 'multimodalRoutes');
-const pdfRoutes = safeImport('./api/pdf.routes', 'pdfRoutes');
 const conversationRoutes = safeImport('./api/conversation.routes', 'conversationRoutes');
 const exportRoutes = safeImport('./api/export.routes', 'exportRoutes');
 const reportRoutes = safeImport('./api/report.routes', 'reportRoutes');
@@ -65,10 +63,8 @@ router.get('/', (req, res) => {
       },
       gemini: {
         text: 'POST /api/gemini/text',
-        image: 'POST /api/gemini/image',
         voice: 'POST /api/gemini/voice',
         multimodal: 'POST /api/gemini/multimodal',
-        pdf: 'POST /api/gemini/pdf',
       },
       conversations: {
         list: 'GET /api/conversations',
@@ -123,10 +119,8 @@ router.use('/health', healthRoutes);
 console.log('Montando rutas de Gemini...');
 const geminiRouter = express.Router();
 geminiRouter.use('/text', textRoutes);
-geminiRouter.use('/image', imageRoutes);
 geminiRouter.use('/voice', voiceRoutes);
 geminiRouter.use('/multimodal', multimodalRoutes);
-geminiRouter.use('/pdf', pdfRoutes);
 router.use('/gemini', geminiRouter);
 
 /**

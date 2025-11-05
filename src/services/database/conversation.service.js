@@ -10,11 +10,12 @@ class ConversationService {
    * @param {string} conversationData.userId - ID del usuario
    * @param {string} conversationData.title - Titulo de la conversacion
    * @param {Array} conversationData.tags - Tags opcionales
+   * @param {Object} conversationData.metadata - Metadata adicional
    * @returns {Promise<Object>} - Conversacion creada
    */
   async createConversation(conversationData) {
     try {
-      const { userId, title, tags = [] } = conversationData;
+      const { userId, title, tags = [], metadata = {} } = conversationData;
 
       if (!userId || !title) {
         throw new Error('userId y title son requeridos');
@@ -32,7 +33,8 @@ class ConversationService {
         isArchived: false,
         isPinned: false,
         lastMessageAt: new Date(),
-        messageCount: 0
+        messageCount: 0,
+        metadata: metadata || {}
       });
 
       return conversation.toObject();
@@ -117,7 +119,6 @@ class ConversationService {
           let lastMessagePreview = 'Sin mensajes';
           
           if (lastMessage) {
-            // Limitar a 60 caracteres
             const content = lastMessage.content || '';
             lastMessagePreview = content.length > 60 
               ? content.substring(0, 60) + '...'
@@ -128,7 +129,9 @@ class ConversationService {
             ...conv,
             id: conv._id.toString(),
             lastMessage: lastMessagePreview,
-            lastMessageRole: lastMessage?.role || null
+            lastMessageRole: lastMessage?.role || null,
+            isAcademic: conv.metadata?.academicMode === true || conv.tags.includes('academico'),
+            area: conv.metadata?.area || null
           };
         })
       );
@@ -174,7 +177,8 @@ class ConversationService {
         'isPinned', 
         'lastMessage',
         'lastMessageAt',
-        'updatedAt'
+        'updatedAt',
+        'metadata'
       ];
       
       const updateData = {};
@@ -186,7 +190,7 @@ class ConversationService {
       }
 
       if (Object.keys(updateData).length === 0) {
-        throw new Error('No hay campos válidos para actualizar');
+        throw new Error('No hay campos validos para actualizar');
       }
 
       const conversation = await Conversation.findOneAndUpdate(
@@ -204,6 +208,46 @@ class ConversationService {
       return conversation;
     } catch (error) {
       throw new Error(`Error actualizando conversacion: ${error.message}`);
+    }
+  }
+
+  /**
+   * Actualiza metadata de una conversacion
+   * @param {string} conversationId - ID de la conversacion
+   * @param {string} userId - ID del usuario
+   * @param {Object} metadataUpdates - Actualizaciones de metadata
+   * @returns {Promise<Object|null>} - Conversacion actualizada
+   */
+  async updateMetadata(conversationId, userId, metadataUpdates) {
+    try {
+      if (!conversationId || !userId) {
+        throw new Error('conversationId y userId son requeridos');
+      }
+
+      const conversation = await Conversation.findOne({
+        _id: conversationId,
+        userId
+      });
+
+      if (!conversation) {
+        return null;
+      }
+
+      // Merge metadata existente con actualizaciones
+      conversation.metadata = {
+        ...conversation.metadata,
+        ...metadataUpdates,
+        updatedAt: new Date()
+      };
+
+      await conversation.save();
+
+      const result = conversation.toObject();
+      result.id = result._id.toString();
+
+      return result;
+    } catch (error) {
+      throw new Error(`Error actualizando metadata: ${error.message}`);
     }
   }
 
@@ -334,7 +378,9 @@ class ConversationService {
         assistantMessages,
         tokenUsage: conversation.tokenUsage,
         createdAt: conversation.createdAt,
-        updatedAt: conversation.updatedAt
+        updatedAt: conversation.updatedAt,
+        metadata: conversation.metadata || {},
+        isAcademic: conversation.metadata?.academicMode === true
       };
     } catch (error) {
       throw new Error(`Error obteniendo estadisticas: ${error.message}`);
@@ -364,7 +410,6 @@ class ConversationService {
         .limit(20)
         .lean();
 
-      // Agregar ultimo mensaje a cada conversacion
       const conversationsWithLastMessage = await Promise.all(
         conversations.map(async (conv) => {
           const lastMessage = await Message.findOne({ 
@@ -377,7 +422,8 @@ class ConversationService {
           return {
             ...conv,
             id: conv._id.toString(),
-            lastMessage: lastMessage?.content?.substring(0, 60) + '...' || 'Sin mensajes'
+            lastMessage: lastMessage?.content?.substring(0, 60) + '...' || 'Sin mensajes',
+            isAcademic: conv.metadata?.academicMode === true
           };
         })
       );
@@ -409,10 +455,50 @@ class ConversationService {
 
       return conversations.map(conv => ({
         ...conv,
-        id: conv._id.toString()
+        id: conv._id.toString(),
+        isAcademic: conv.metadata?.academicMode === true
       }));
     } catch (error) {
       throw new Error(`Error buscando por tags: ${error.message}`);
+    }
+  }
+
+  /**
+   * Obtiene conversaciones academicas de un usuario
+   * @param {string} userId - ID del usuario
+   * @param {string} area - Area academica (opcional)
+   * @returns {Promise<Array>} - Conversaciones academicas
+   */
+  async getAcademicConversations(userId, area = null) {
+    try {
+      if (!userId) {
+        throw new Error('userId es requerido');
+      }
+
+      const query = {
+        userId,
+        $or: [
+          { 'metadata.academicMode': true },
+          { tags: 'academico' }
+        ]
+      };
+
+      if (area) {
+        query['metadata.area'] = area;
+      }
+
+      const conversations = await Conversation.find(query)
+        .sort({ lastMessageAt: -1 })
+        .lean();
+
+      return conversations.map(conv => ({
+        ...conv,
+        id: conv._id.toString(),
+        isAcademic: true,
+        area: conv.metadata?.area || null
+      }));
+    } catch (error) {
+      throw new Error(`Error obteniendo conversaciones academicas: ${error.message}`);
     }
   }
 
@@ -454,7 +540,8 @@ class ConversationService {
 
       return conversations.map(conv => ({
         ...conv,
-        id: conv._id.toString()
+        id: conv._id.toString(),
+        isAcademic: conv.metadata?.academicMode === true
       }));
     } catch (error) {
       throw new Error(`Error obteniendo conversaciones recientes: ${error.message}`);

@@ -1,11 +1,10 @@
 // src/controllers/gemini/multimodal.controller.js
 
-const geminiClient = require('../../services/gemini/geminiClient.service');
-const conversationService = require('../../services/database/conversation.service');
+const multimodalService = require('../../services/gemini/multimodal.service');
 const messageService = require('../../services/database/message.service');
 const fileStorageService = require('../../services/utils/fileStorage.service');
-const fs = require('fs').promises;
-const path = require('path');
+const markdownProcessor = require('../../services/utils/markdownProcessor.service');
+const logger = require('../../utils/logger');
 
 class MultimodalController {
   /**
@@ -15,14 +14,15 @@ class MultimodalController {
     const uploadedFiles = [];
     
     try {
-      const { prompt, conversationId, temperature } = req.body;
-      const userId = req.userId;
+      const { prompt, conversationId, temperature, maxTokens } = req.body;
+      const userId = req.user.id;
       const files = req.files || [];
 
       if (!prompt && files.length === 0) {
         return res.status(400).json({
           success: false,
-          message: 'Se requiere al menos un prompt o un archivo'
+          message: 'Se requiere al menos un prompt o un archivo',
+          timestamp: new Date().toISOString()
         });
       }
 
@@ -30,120 +30,73 @@ class MultimodalController {
         uploadedFiles.push(file.path);
       }
 
-      let conversation;
-      if (conversationId) {
-        conversation = await conversationService.getConversationById(conversationId, userId);
-        if (!conversation) {
-          return res.status(400).json({
-            success: false,
-            message: 'Conversacion no encontrada'
-          });
-        }
-      } else {
-        const title = this.generateTitle(prompt);
-        conversation = await conversationService.createConversation({
-          userId,
-          title,
-          tags: ['multimodal', ...this.extractTags(files)]
-        });
-      }
-
-      const parts = [];
-      const attachments = [];
-
-      if (prompt) {
-        parts.push({ text: prompt });
-      }
-
-      for (const file of files) {
-        const fileBuffer = await fs.readFile(file.path);
-        const filePart = geminiClient.fileToGenerativePart(fileBuffer, file.mimetype);
-        
-        parts.push(filePart);
-        
-        attachments.push({
-          type: this.getFileType(file.mimetype),
-          url: file.path,
-          name: file.originalname,
-          mimeType: file.mimetype,
-          size: file.size
-        });
-      }
-
-      const userMessage = await messageService.createMessage({
-        conversationId: conversation._id,
-        role: 'user',
-        content: prompt || 'Archivo adjunto',
-        type: 'multimodal',
-        attachments,
-        tokens: await geminiClient.countTokens(prompt || 'Archivo adjunto')
+      logger.info('Procesando contenido multimodal', {
+        userId,
+        conversationId,
+        filesCount: files.length,
+        hasPrompt: !!prompt
       });
 
-      await conversationService.addMessageToConversation(
-        conversation._id,
-        userMessage._id
-      );
+      const processedFiles = files.map(file => ({
+        path: file.path,
+        name: file.originalname,
+        mimeType: file.mimetype,
+        size: file.size
+      }));
 
       const config = {
-        temperature: parseFloat(temperature) || 0.7
+        temperature: parseFloat(temperature) || 0.7,
+        maxOutputTokens: parseInt(maxTokens) || 2048
       };
 
-      const result = await geminiClient.generateMultimodalContent(parts, config);
-
-      const assistantMessage = await messageService.createMessage({
-        conversationId: conversation._id,
-        role: 'assistant',
-        content: result.text,
-        type: 'multimodal',
-        tokens: await geminiClient.countTokens(result.text)
+      const result = await multimodalService.analyzeMultimodal({
+        prompt,
+        files: processedFiles,
+        userId,
+        conversationId,
+        config,
+        user: req.user
       });
-
-      await conversationService.addMessageToConversation(
-        conversation._id,
-        assistantMessage._id
-      );
-
-      const totalTokens = userMessage.tokens + assistantMessage.tokens;
-      await conversationService.updateTokenUsage(conversation._id, totalTokens);
 
       await this.cleanupFiles(uploadedFiles);
 
-      const fileTypes = files.map(f => this.getFileType(f.mimetype));
-      const uniqueFileTypes = [...new Set(fileTypes)];
+      // POST-PROCESAR el contenido markdown
+      const processedResponse = markdownProcessor.process(result.response);
+      
+      // Actualizar el mensaje en la base de datos con el contenido procesado
+      if (result.messageId) {
+        await messageService.updateMessage(result.messageId, {
+          content: processedResponse
+        });
+      }
+
+      logger.info('Contenido multimodal procesado exitosamente', {
+        userId,
+        conversationId: result.conversationId,
+        messageId: result.messageId,
+        filesProcessed: files.length,
+        tokens: result.tokens.total,
+        contentProcessed: true
+      });
 
       return res.status(200).json({
         success: true,
+        message: 'Contenido multimodal procesado exitosamente',
         data: {
-          response: result.text,
-          conversationId: conversation._id,
-          messageId: assistantMessage._id,
-          attachments: attachments.map(att => ({
-            type: att.type,
-            name: att.name,
-            size: att.size
-          })),
-          tokens: {
-            prompt: userMessage.tokens,
-            completion: assistantMessage.tokens,
-            total: totalTokens
-          },
-          metadata: {
-            model: geminiClient.model,
-            filesProcessed: files.length,
-            fileTypes: uniqueFileTypes,
-            temperature: config.temperature,
-            timestamp: new Date()
-          }
-        }
+          ...result,
+          response: processedResponse
+        },
+        timestamp: new Date().toISOString()
       });
     } catch (error) {
       await this.cleanupFiles(uploadedFiles);
       
-      console.error('Error en processMultimodal:', error);
+      logger.error('Error en processMultimodal:', error);
       return res.status(500).json({
         success: false,
         message: 'Error procesando contenido multimodal',
-        error: error.message
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+        timestamp: new Date().toISOString()
       });
     }
   }
@@ -155,14 +108,15 @@ class MultimodalController {
     const uploadedFiles = [];
     
     try {
-      const { prompt, conversationId, temperature } = req.body;
-      const userId = req.userId;
+      const { prompt, conversationId, temperature, maxTokens } = req.body;
+      const userId = req.user.id;
       const files = req.files || [];
 
       if (!prompt && files.length === 0) {
         return res.status(400).json({
           success: false,
-          message: 'Se requiere al menos un prompt o un archivo'
+          message: 'Se requiere al menos un prompt o un archivo',
+          timestamp: new Date().toISOString()
         });
       }
 
@@ -170,147 +124,122 @@ class MultimodalController {
         uploadedFiles.push(file.path);
       }
 
-      let conversation;
-      if (conversationId) {
-        conversation = await conversationService.getConversationById(conversationId, userId);
-        if (!conversation) {
-          return res.status(400).json({
-            success: false,
-            message: 'Conversacion no encontrada'
-          });
-        }
-      } else {
-        const title = this.generateTitle(prompt);
-        conversation = await conversationService.createConversation({
-          userId,
-          title,
-          tags: ['multimodal', 'streaming', ...this.extractTags(files)]
-        });
-      }
+      logger.info('Iniciando streaming multimodal', {
+        userId,
+        conversationId,
+        filesCount: files.length
+      });
 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
 
-      const parts = [];
-      const attachments = [];
-
-      if (prompt) {
-        parts.push({ text: prompt });
-      }
-
-      for (const file of files) {
-        const fileBuffer = await fs.readFile(file.path);
-        const filePart = geminiClient.fileToGenerativePart(fileBuffer, file.mimetype);
-        
-        parts.push(filePart);
-        
-        attachments.push({
-          type: this.getFileType(file.mimetype),
-          url: file.path,
-          name: file.originalname,
-          mimeType: file.mimetype,
-          size: file.size
-        });
-      }
-
-      const userMessage = await messageService.createMessage({
-        conversationId: conversation._id,
-        role: 'user',
-        content: prompt || 'Archivo adjunto',
-        type: 'multimodal',
-        attachments,
-        tokens: await geminiClient.countTokens(prompt || 'Archivo adjunto')
-      });
-
-      await conversationService.addMessageToConversation(
-        conversation._id,
-        userMessage._id
-      );
+      const processedFiles = files.map(file => ({
+        path: file.path,
+        name: file.originalname,
+        mimeType: file.mimetype,
+        size: file.size
+      }));
 
       const config = {
-        temperature: parseFloat(temperature) || 0.7
+        temperature: parseFloat(temperature) || 0.7,
+        maxOutputTokens: parseInt(maxTokens) || 2048
       };
 
-      const model = geminiClient.getModel(config);
-      const result = await model.generateContentStream(parts);
+      res.write(`data: ${JSON.stringify({
+        type: 'start',
+        conversationId: conversationId || null,
+        filesCount: files.length,
+        timestamp: new Date().toISOString()
+      })}\n\n`);
 
-      let fullResponse = '';
+      let fullText = '';
       let chunkCount = 0;
 
-      for await (const chunk of result.stream) {
-        const chunkText = chunk.text();
-        fullResponse += chunkText;
+      const onChunk = (data) => {
+        fullText += data.chunk;
         chunkCount++;
-
+        
         res.write(`data: ${JSON.stringify({
           type: 'chunk',
-          chunk: chunkText,
-          accumulated: fullResponse,
-          chunkNumber: chunkCount,
-          conversationId: conversation._id
+          text: data.chunk,
+          accumulated: data.accumulated,
+          chunkNumber: data.chunkNumber,
+          conversationId: data.conversationId,
+          timestamp: new Date().toISOString()
         })}\n\n`);
-      }
+      };
 
-      const assistantMessage = await messageService.createMessage({
-        conversationId: conversation._id,
-        role: 'assistant',
-        content: fullResponse,
-        type: 'multimodal',
-        tokens: await geminiClient.countTokens(fullResponse)
-      });
-
-      await conversationService.addMessageToConversation(
-        conversation._id,
-        assistantMessage._id
+      const result = await multimodalService.analyzeMultimodalStream(
+        {
+          prompt,
+          files: processedFiles,
+          userId,
+          conversationId,
+          config,
+          user: req.user
+        },
+        onChunk
       );
-
-      const totalTokens = userMessage.tokens + assistantMessage.tokens;
-      await conversationService.updateTokenUsage(conversation._id, totalTokens);
 
       await this.cleanupFiles(uploadedFiles);
 
-      const fileTypes = files.map(f => this.getFileType(f.mimetype));
-      const uniqueFileTypes = [...new Set(fileTypes)];
+      // POST-PROCESAR el contenido completo al finalizar streaming
+      const processedFullText = markdownProcessor.processStreamComplete(fullText);
+
+      logger.info('Contenido procesado despues de streaming multimodal', {
+        originalLength: fullText.length,
+        processedLength: processedFullText.length,
+        chunks: chunkCount
+      });
+
+      // Actualizar el mensaje en la base de datos con el contenido procesado
+      if (result.messageId) {
+        await messageService.updateMessage(result.messageId, {
+          content: processedFullText
+        });
+      }
+
+      logger.info('Streaming multimodal completado', {
+        userId,
+        conversationId: result.conversationId,
+        messageId: result.messageId,
+        chunks: chunkCount,
+        tokens: result.tokens.total,
+        contentProcessed: true
+      });
 
       res.write(`data: ${JSON.stringify({
-        type: 'done',
-        result: {
-          response: fullResponse,
-          conversationId: conversation._id,
-          messageId: assistantMessage._id,
-          chunks: chunkCount,
-          tokens: {
-            prompt: userMessage.tokens,
-            completion: assistantMessage.tokens,
-            total: totalTokens
-          },
-          metadata: {
-            model: geminiClient.model,
-            filesProcessed: files.length,
-            fileTypes: uniqueFileTypes,
-            streamingMode: true,
-            timestamp: new Date()
-          }
-        }
+        type: 'end',
+        messageId: result.messageId,
+        conversationId: result.conversationId,
+        tokens: result.tokens,
+        attachments: result.attachments,
+        chunks: chunkCount,
+        fullText: processedFullText,
+        metadata: result.metadata,
+        timestamp: new Date().toISOString()
       })}\n\n`);
 
       res.end();
     } catch (error) {
       await this.cleanupFiles(uploadedFiles);
       
-      console.error('Error en processMultimodalStream:', error);
+      logger.error('Error en processMultimodalStream:', error);
       
       if (!res.headersSent) {
         return res.status(500).json({
           success: false,
           message: 'Error procesando contenido multimodal',
-          error: error.message
+          error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+          timestamp: new Date().toISOString()
         });
       } else {
         res.write(`data: ${JSON.stringify({
           type: 'error',
-          message: error.message
+          message: error.message,
+          timestamp: new Date().toISOString()
         })}\n\n`);
         res.end();
       }
@@ -324,14 +253,15 @@ class MultimodalController {
     const uploadedFiles = [];
     
     try {
-      const { criteria, conversationId, temperature } = req.body;
-      const userId = req.userId;
+      const { criteria, conversationId, temperature, maxTokens } = req.body;
+      const userId = req.user.id;
       const files = req.files || [];
 
       if (files.length < 2) {
         return res.status(400).json({
           success: false,
-          message: 'Se requieren al menos 2 archivos para comparar'
+          message: 'Se requieren al menos 2 archivos para comparar',
+          timestamp: new Date().toISOString()
         });
       }
 
@@ -339,164 +269,89 @@ class MultimodalController {
         uploadedFiles.push(file.path);
       }
 
-      let conversation;
-      if (conversationId) {
-        conversation = await conversationService.getConversationById(conversationId, userId);
-        if (!conversation) {
-          return res.status(400).json({
-            success: false,
-            message: 'Conversacion no encontrada'
-          });
-        }
-      } else {
-        const title = criteria || 'Comparacion de archivos';
-        conversation = await conversationService.createConversation({
-          userId,
-          title,
-          tags: ['multimodal', 'comparison', ...this.extractTags(files)]
-        });
-      }
+      logger.info('Comparando archivos', {
+        userId,
+        conversationId,
+        filesCount: files.length
+      });
 
-      const parts = [];
-      const attachments = [];
+      const processedFiles = files.map(file => ({
+        path: file.path,
+        name: file.originalname,
+        mimeType: file.mimetype,
+        size: file.size
+      }));
 
       const prompt = criteria || 'Compara estos archivos y describe sus similitudes, diferencias y cualquier detalle relevante.';
-      parts.push({ text: prompt });
-
-      for (const file of files) {
-        const fileBuffer = await fs.readFile(file.path);
-        const filePart = geminiClient.fileToGenerativePart(fileBuffer, file.mimetype);
-        
-        parts.push(filePart);
-        
-        attachments.push({
-          type: this.getFileType(file.mimetype),
-          url: file.path,
-          name: file.originalname,
-          mimeType: file.mimetype,
-          size: file.size
-        });
-      }
-
-      const userMessage = await messageService.createMessage({
-        conversationId: conversation._id,
-        role: 'user',
-        content: prompt,
-        type: 'multimodal',
-        attachments,
-        tokens: await geminiClient.countTokens(prompt)
-      });
-
-      await conversationService.addMessageToConversation(
-        conversation._id,
-        userMessage._id
-      );
 
       const config = {
-        temperature: parseFloat(temperature) || 0.7
+        temperature: parseFloat(temperature) || 0.7,
+        maxOutputTokens: parseInt(maxTokens) || 2048
       };
 
-      const result = await geminiClient.generateMultimodalContent(parts, config);
-
-      const assistantMessage = await messageService.createMessage({
-        conversationId: conversation._id,
-        role: 'assistant',
-        content: result.text,
-        type: 'multimodal',
-        tokens: await geminiClient.countTokens(result.text)
+      const result = await multimodalService.analyzeMultimodal({
+        prompt,
+        files: processedFiles,
+        userId,
+        conversationId,
+        config,
+        user: req.user
       });
-
-      await conversationService.addMessageToConversation(
-        conversation._id,
-        assistantMessage._id
-      );
-
-      const totalTokens = userMessage.tokens + assistantMessage.tokens;
-      await conversationService.updateTokenUsage(conversation._id, totalTokens);
 
       await this.cleanupFiles(uploadedFiles);
 
-      const fileTypes = files.map(f => this.getFileType(f.mimetype));
-      const uniqueFileTypes = [...new Set(fileTypes)];
+      // POST-PROCESAR el contenido markdown
+      const processedResponse = markdownProcessor.process(result.response);
+      
+      // Actualizar el mensaje en la base de datos con el contenido procesado
+      if (result.messageId) {
+        await messageService.updateMessage(result.messageId, {
+          content: processedResponse
+        });
+      }
+
+      logger.info('Comparacion de archivos completada', {
+        userId,
+        conversationId: result.conversationId,
+        messageId: result.messageId,
+        filesCompared: files.length,
+        tokens: result.tokens.total,
+        contentProcessed: true
+      });
 
       return res.status(200).json({
         success: true,
+        message: 'Archivos comparados exitosamente',
         data: {
-          response: result.text,
-          conversationId: conversation._id,
-          messageId: assistantMessage._id,
-          comparedFiles: attachments.map(att => ({
-            type: att.type,
-            name: att.name,
-            size: att.size
-          })),
-          tokens: {
-            prompt: userMessage.tokens,
-            completion: assistantMessage.tokens,
-            total: totalTokens
-          },
-          metadata: {
-            model: geminiClient.model,
-            filesCompared: files.length,
-            fileTypes: uniqueFileTypes,
-            comparisonMode: true,
-            timestamp: new Date()
-          }
-        }
+          ...result,
+          response: processedResponse,
+          comparisonMode: true,
+          filesCompared: files.length
+        },
+        timestamp: new Date().toISOString()
       });
     } catch (error) {
       await this.cleanupFiles(uploadedFiles);
       
-      console.error('Error en compareFiles:', error);
+      logger.error('Error en compareFiles:', error);
       return res.status(500).json({
         success: false,
         message: 'Error comparando archivos',
-        error: error.message
+        error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+        timestamp: new Date().toISOString()
       });
     }
   }
 
   /**
-   * Utilidades
+   * Limpia archivos temporales
    */
-  
-  getFileType(mimeType) {
-    if (mimeType.startsWith('image/')) return 'image';
-    if (mimeType.startsWith('audio/')) return 'audio';
-    if (mimeType === 'application/pdf') return 'pdf';
-    return 'file';
-  }
-
-  extractTags(files) {
-    const tags = new Set();
-    
-    for (const file of files) {
-      const type = this.getFileType(file.mimetype);
-      tags.add(type);
-    }
-    
-    return Array.from(tags);
-  }
-
-  generateTitle(prompt) {
-    if (!prompt) return 'Contenido multimodal';
-    
-    const maxLength = 50;
-    const cleaned = prompt.trim().replace(/\n/g, ' ');
-    
-    if (cleaned.length <= maxLength) {
-      return cleaned;
-    }
-    
-    return cleaned.substring(0, maxLength - 3) + '...';
-  }
-
   async cleanupFiles(filePaths) {
     for (const filePath of filePaths) {
       try {
         await fileStorageService.deleteFile(filePath);
       } catch (error) {
-        console.error(`Error eliminando archivo ${filePath}:`, error.message);
+        logger.error(`Error eliminando archivo ${filePath}:`, error);
       }
     }
   }

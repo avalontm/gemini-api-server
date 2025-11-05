@@ -4,10 +4,11 @@ const geminiClient = require('./geminiClient.service');
 const conversationService = require('../database/conversation.service');
 const messageService = require('../database/message.service');
 const fs = require('fs').promises;
+const logger = require('../../utils/logger');
 
 class MultimodalService {
   /**
-   * Analiza contenido multimodal (imagenes, audio, PDFs)
+   * Analiza contenido multimodal CON HISTORIAL (imagenes, audio, PDFs)
    * @param {Object} data - Datos del analisis
    * @returns {Promise<Object>} - Resultado del analisis
    */
@@ -18,14 +19,25 @@ class MultimodalService {
         files, 
         userId, 
         conversationId, 
-        config = {} 
+        config = {},
+        user = null 
       } = data;
 
       if (!prompt && (!files || files.length === 0)) {
         throw new Error('Se requiere al menos un prompt o archivos');
       }
 
+      logger.info('Iniciando analisis multimodal', {
+        userId,
+        conversationId,
+        filesCount: files ? files.length : 0,
+        hasPrompt: !!prompt
+      });
+
       let conversation;
+      let isNewConversation = false;
+
+      // Crear o obtener conversacion
       if (conversationId) {
         conversation = await conversationService.getConversationById(conversationId, userId);
         if (!conversation) {
@@ -38,19 +50,23 @@ class MultimodalService {
         conversation = await conversationService.createConversation({
           userId,
           title,
-          tags: ['multimodal', ...tags]
+          tags: ['multimodal', ...tags],
+          metadata: {
+            multimodal: true,
+            createdBy: 'multimodal-service'
+          }
         });
+        isNewConversation = true;
       }
 
+      // Procesar archivos y crear parts
       const parts = [];
       const attachments = [];
 
-      if (prompt) {
-        parts.push({ text: prompt });
-      }
-
       if (files && files.length > 0) {
         for (const file of files) {
+          this.validateFileType(file.mimeType);
+          
           const fileBuffer = await fs.readFile(file.path);
           const filePart = geminiClient.fileToGenerativePart(fileBuffer, file.mimeType);
           
@@ -66,6 +82,12 @@ class MultimodalService {
         }
       }
 
+      // Agregar prompt al final (despues de los archivos)
+      if (prompt) {
+        parts.push({ text: prompt });
+      }
+
+      // Guardar mensaje del usuario con attachments
       const userMessage = await messageService.createMessage({
         conversationId: conversation._id,
         role: 'user',
@@ -80,14 +102,45 @@ class MultimodalService {
         userMessage._id
       );
 
-      const result = await geminiClient.generateMultimodalContent(parts, config);
+      // Obtener API key del usuario
+      const apiKey = user ? geminiClient.getApiKeyForUser(user) : null;
+
+      // Obtener historial de conversacion
+      const history = await geminiClient.buildConversationHistory(conversation._id);
+
+      // Inicializar modelo
+      const model = geminiClient.initializeModel(
+        { config },
+        apiKey
+      );
+
+      // Iniciar chat con historial
+      const chat = model.startChat({
+        history: history,
+        generationConfig: config
+      });
+
+      logger.info('Chat multimodal iniciado con historial', {
+        conversationId: conversation._id,
+        historyLength: history.length
+      });
+
+      // Enviar mensaje con partes multimodales
+      const result = await chat.sendMessage(parts);
+      const response = result.response;
+      const text = response.text();
+
+      // Guardar respuesta del asistente
+      const assistantTokens = response.usageMetadata?.candidatesTokenCount || 
+                              response.usageMetadata?.totalTokenCount || 
+                              await geminiClient.countTokens(text);
 
       const assistantMessage = await messageService.createMessage({
         conversationId: conversation._id,
         role: 'assistant',
-        content: result.text,
+        content: text,
         type: 'multimodal',
-        tokens: await geminiClient.countTokens(result.text)
+        tokens: assistantTokens
       });
 
       await conversationService.addMessageToConversation(
@@ -95,11 +148,18 @@ class MultimodalService {
         assistantMessage._id
       );
 
-      const totalTokens = userMessage.tokens + assistantMessage.tokens;
-      await conversationService.updateTokenUsage(conversation._id, totalTokens);
+      const totalTokens = userMessage.tokens + assistantTokens;
+      await conversationService.updateTokenUsage(conversation._id, assistantTokens);
+
+      logger.info('Analisis multimodal completado', {
+        conversationId: conversation._id,
+        messageId: assistantMessage._id,
+        filesProcessed: files ? files.length : 0,
+        tokens: totalTokens
+      });
 
       return {
-        response: result.text,
+        response: text,
         conversationId: conversation._id,
         messageId: assistantMessage._id,
         attachments: attachments.map(att => ({
@@ -109,23 +169,28 @@ class MultimodalService {
         })),
         tokens: {
           prompt: userMessage.tokens,
-          completion: assistantMessage.tokens,
+          completion: assistantTokens,
           total: totalTokens
         },
         metadata: {
           model: geminiClient.model,
           filesProcessed: files ? files.length : 0,
           fileTypes: this.extractTags(files),
+          historyLength: history.length,
+          totalMessages: history.length + 2,
+          isNewConversation,
+          usingPersonalApiKey: apiKey !== geminiClient.defaultApiKey,
           timestamp: new Date()
         }
       };
     } catch (error) {
+      logger.error('Error en analisis multimodal:', error);
       throw new Error(`Error en analisis multimodal: ${error.message}`);
     }
   }
 
   /**
-   * Analiza contenido multimodal con streaming
+   * Analiza contenido multimodal con streaming Y CON HISTORIAL
    */
   async analyzeMultimodalStream(data, onChunk) {
     try {
@@ -134,7 +199,8 @@ class MultimodalService {
         files, 
         userId, 
         conversationId, 
-        config = {} 
+        config = {},
+        user = null 
       } = data;
 
       if (!prompt && (!files || files.length === 0)) {
@@ -145,7 +211,16 @@ class MultimodalService {
         throw new Error('onChunk debe ser una funcion');
       }
 
+      logger.info('Iniciando streaming multimodal', {
+        userId,
+        conversationId,
+        filesCount: files ? files.length : 0
+      });
+
       let conversation;
+      let isNewConversation = false;
+
+      // Crear o obtener conversacion
       if (conversationId) {
         conversation = await conversationService.getConversationById(conversationId, userId);
         if (!conversation) {
@@ -158,19 +233,24 @@ class MultimodalService {
         conversation = await conversationService.createConversation({
           userId,
           title,
-          tags: ['multimodal', 'streaming', ...tags]
+          tags: ['multimodal', 'streaming', ...tags],
+          metadata: {
+            multimodal: true,
+            streaming: true,
+            createdBy: 'multimodal-service'
+          }
         });
+        isNewConversation = true;
       }
 
+      // Procesar archivos
       const parts = [];
       const attachments = [];
 
-      if (prompt) {
-        parts.push({ text: prompt });
-      }
-
       if (files && files.length > 0) {
         for (const file of files) {
+          this.validateFileType(file.mimeType);
+          
           const fileBuffer = await fs.readFile(file.path);
           const filePart = geminiClient.fileToGenerativePart(fileBuffer, file.mimeType);
           
@@ -186,6 +266,12 @@ class MultimodalService {
         }
       }
 
+      // Agregar prompt
+      if (prompt) {
+        parts.push({ text: prompt });
+      }
+
+      // Guardar mensaje del usuario
       const userMessage = await messageService.createMessage({
         conversationId: conversation._id,
         role: 'user',
@@ -200,12 +286,36 @@ class MultimodalService {
         userMessage._id
       );
 
-      const model = geminiClient.getModel(config);
-      const result = await model.generateContentStream(parts);
+      // Obtener API key del usuario
+      const apiKey = user ? geminiClient.getApiKeyForUser(user) : null;
+
+      // Obtener historial
+      const history = await geminiClient.buildConversationHistory(conversation._id);
+
+      // Inicializar modelo
+      const model = geminiClient.initializeModel(
+        { config },
+        apiKey
+      );
+
+      // Iniciar chat con historial
+      const chat = model.startChat({
+        history: history,
+        generationConfig: config
+      });
+
+      logger.info('Streaming multimodal iniciado con historial', {
+        conversationId: conversation._id,
+        historyLength: history.length
+      });
+
+      // Obtener stream
+      const result = await chat.sendMessageStream(parts);
 
       let fullResponse = '';
       let chunkCount = 0;
 
+      // Procesar stream
       for await (const chunk of result.stream) {
         const chunkText = chunk.text();
         fullResponse += chunkText;
@@ -219,12 +329,19 @@ class MultimodalService {
         });
       }
 
+      // Obtener respuesta final
+      const finalResponse = await result.response;
+      const assistantTokens = finalResponse.usageMetadata?.candidatesTokenCount || 
+                              finalResponse.usageMetadata?.totalTokenCount || 
+                              await geminiClient.countTokens(fullResponse);
+
+      // Guardar respuesta del asistente
       const assistantMessage = await messageService.createMessage({
         conversationId: conversation._id,
         role: 'assistant',
         content: fullResponse,
         type: 'multimodal',
-        tokens: await geminiClient.countTokens(fullResponse)
+        tokens: assistantTokens
       });
 
       await conversationService.addMessageToConversation(
@@ -232,17 +349,29 @@ class MultimodalService {
         assistantMessage._id
       );
 
-      const totalTokens = userMessage.tokens + assistantMessage.tokens;
-      await conversationService.updateTokenUsage(conversation._id, totalTokens);
+      const totalTokens = userMessage.tokens + assistantTokens;
+      await conversationService.updateTokenUsage(conversation._id, assistantTokens);
+
+      logger.info('Streaming multimodal completado', {
+        conversationId: conversation._id,
+        messageId: assistantMessage._id,
+        chunks: chunkCount,
+        tokens: totalTokens
+      });
 
       return {
         response: fullResponse,
         conversationId: conversation._id,
         messageId: assistantMessage._id,
         chunks: chunkCount,
+        attachments: attachments.map(att => ({
+          type: att.type,
+          name: att.name,
+          size: att.size
+        })),
         tokens: {
           prompt: userMessage.tokens,
-          completion: assistantMessage.tokens,
+          completion: assistantTokens,
           total: totalTokens
         },
         metadata: {
@@ -250,10 +379,15 @@ class MultimodalService {
           filesProcessed: files ? files.length : 0,
           fileTypes: this.extractTags(files),
           streamingMode: true,
+          historyLength: history.length,
+          totalMessages: history.length + 2,
+          isNewConversation,
+          usingPersonalApiKey: apiKey !== geminiClient.defaultApiKey,
           timestamp: new Date()
         }
       };
     } catch (error) {
+      logger.error('Error en streaming multimodal:', error);
       throw new Error(`Error en streaming multimodal: ${error.message}`);
     }
   }
@@ -338,7 +472,8 @@ class MultimodalService {
       supportedDocumentFormats: ['pdf'],
       maxFilesPerRequest: 10,
       maxFileSizeMB: 10,
-      streamingSupported: true
+      streamingSupported: true,
+      historySupported: true
     };
   }
 }

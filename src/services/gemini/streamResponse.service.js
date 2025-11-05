@@ -3,21 +3,23 @@
 const geminiClient = require('./geminiClient.service');
 const conversationService = require('../database/conversation.service');
 const messageService = require('../database/message.service');
+const logger = require('../../utils/logger');
 
 class StreamResponseService {
   /**
-   * Genera respuesta de texto en modo streaming
+   * Genera respuesta de texto en modo streaming CON HISTORIAL
    * @param {Object} data - Datos para streaming
    * @param {string} data.prompt - Prompt de texto
    * @param {string} data.userId - ID del usuario
    * @param {string} data.conversationId - ID de conversacion (opcional)
    * @param {Function} data.onChunk - Callback para cada chunk recibido
    * @param {Object} data.config - Configuracion opcional
+   * @param {Object} data.user - Usuario completo (opcional)
    * @returns {Promise<Object>} - Respuesta completa y metadata
    */
   async streamText(data) {
     try {
-      const { prompt, userId, conversationId, onChunk, config = {} } = data;
+      const { prompt, userId, conversationId, onChunk, config = {}, user = null } = data;
 
       if (!prompt || !userId) {
         throw new Error('prompt y userId son requeridos');
@@ -27,7 +29,15 @@ class StreamResponseService {
         throw new Error('onChunk debe ser una funcion');
       }
 
+      logger.info('Iniciando streaming de texto con historial', {
+        userId,
+        conversationId,
+        promptLength: prompt.length
+      });
+
       let conversation;
+      let isNewConversation = false;
+
       if (conversationId) {
         conversation = await conversationService.getConversationById(conversationId, userId);
         if (!conversation) {
@@ -40,8 +50,10 @@ class StreamResponseService {
           title,
           tags: ['text', 'streaming']
         });
+        isNewConversation = true;
       }
 
+      // Guardar mensaje del usuario
       const userMessage = await messageService.createMessage({
         conversationId: conversation._id,
         role: 'user',
@@ -55,10 +67,31 @@ class StreamResponseService {
         userMessage._id
       );
 
+      // Obtener API key del usuario
+      const apiKey = user ? geminiClient.getApiKeyForUser(user) : null;
+
+      // Obtener historial
+      const history = await geminiClient.buildConversationHistory(conversation._id);
+
+      // Inicializar modelo
+      const model = geminiClient.initializeModel({ config }, apiKey);
+
+      // Iniciar chat con historial
+      const chat = model.startChat({
+        history: history,
+        generationConfig: config
+      });
+
+      logger.info('Chat de texto iniciado con historial', {
+        conversationId: conversation._id,
+        historyLength: history.length
+      });
+
+      // Obtener stream
+      const result = await chat.sendMessageStream(prompt);
+
       let fullResponse = '';
       let chunkCount = 0;
-
-      const result = await geminiClient.generateContentStream(prompt, config);
 
       for await (const chunk of result.stream) {
         const chunkText = chunk.text();
@@ -73,12 +106,18 @@ class StreamResponseService {
         });
       }
 
+      // Obtener respuesta final
+      const finalResponse = await result.response;
+      const assistantTokens = finalResponse.usageMetadata?.candidatesTokenCount || 
+                              finalResponse.usageMetadata?.totalTokenCount || 
+                              await geminiClient.countTokens(fullResponse);
+
       const assistantMessage = await messageService.createMessage({
         conversationId: conversation._id,
         role: 'assistant',
         content: fullResponse,
         type: 'text',
-        tokens: await geminiClient.countTokens(fullResponse)
+        tokens: assistantTokens
       });
 
       await conversationService.addMessageToConversation(
@@ -86,8 +125,15 @@ class StreamResponseService {
         assistantMessage._id
       );
 
-      const totalTokens = userMessage.tokens + assistantMessage.tokens;
-      await conversationService.updateTokenUsage(conversation._id, totalTokens);
+      const totalTokens = userMessage.tokens + assistantTokens;
+      await conversationService.updateTokenUsage(conversation._id, assistantTokens);
+
+      logger.info('Streaming de texto completado', {
+        conversationId: conversation._id,
+        messageId: assistantMessage._id,
+        chunks: chunkCount,
+        tokens: totalTokens
+      });
 
       return {
         response: fullResponse,
@@ -96,22 +142,27 @@ class StreamResponseService {
         chunks: chunkCount,
         tokens: {
           prompt: userMessage.tokens,
-          completion: assistantMessage.tokens,
+          completion: assistantTokens,
           total: totalTokens
         },
         metadata: {
           model: geminiClient.model,
           streamingMode: true,
+          historyLength: history.length,
+          totalMessages: history.length + 2,
+          isNewConversation,
+          usingPersonalApiKey: apiKey !== geminiClient.defaultApiKey,
           timestamp: new Date()
         }
       };
     } catch (error) {
+      logger.error('Error en streaming de texto:', error);
       throw new Error(`Error en streaming de texto: ${error.message}`);
     }
   }
 
   /**
-   * Genera respuesta multimodal en modo streaming
+   * Genera respuesta multimodal en modo streaming CON HISTORIAL
    * @param {Object} data - Datos para streaming multimodal
    * @param {string} data.prompt - Prompt de texto
    * @param {Array} data.files - Array de archivos (imagenes, etc)
@@ -119,11 +170,12 @@ class StreamResponseService {
    * @param {string} data.conversationId - ID de conversacion (opcional)
    * @param {Function} data.onChunk - Callback para cada chunk recibido
    * @param {Object} data.config - Configuracion opcional
+   * @param {Object} data.user - Usuario completo (opcional)
    * @returns {Promise<Object>} - Respuesta completa y metadata
    */
   async streamMultimodal(data) {
     try {
-      const { prompt, files, userId, conversationId, onChunk, config = {} } = data;
+      const { prompt, files, userId, conversationId, onChunk, config = {}, user = null } = data;
 
       if (!prompt || !userId) {
         throw new Error('prompt y userId son requeridos');
@@ -133,7 +185,15 @@ class StreamResponseService {
         throw new Error('onChunk debe ser una funcion');
       }
 
+      logger.info('Iniciando streaming multimodal con historial', {
+        userId,
+        conversationId,
+        filesCount: files ? files.length : 0
+      });
+
       let conversation;
+      let isNewConversation = false;
+
       if (conversationId) {
         conversation = await conversationService.getConversationById(conversationId, userId);
         if (!conversation) {
@@ -146,9 +206,10 @@ class StreamResponseService {
           title,
           tags: ['multimodal', 'streaming']
         });
+        isNewConversation = true;
       }
 
-      const parts = [{ text: prompt }];
+      const parts = [];
       const attachments = [];
 
       if (files && Array.isArray(files) && files.length > 0) {
@@ -160,6 +221,10 @@ class StreamResponseService {
             name: file.name
           });
         }
+      }
+
+      if (prompt) {
+        parts.push({ text: prompt });
       }
 
       const userMessage = await messageService.createMessage({
@@ -176,10 +241,31 @@ class StreamResponseService {
         userMessage._id
       );
 
+      // Obtener API key del usuario
+      const apiKey = user ? geminiClient.getApiKeyForUser(user) : null;
+
+      // Obtener historial
+      const history = await geminiClient.buildConversationHistory(conversation._id);
+
+      // Inicializar modelo
+      const model = geminiClient.initializeModel({ config }, apiKey);
+
+      // Iniciar chat con historial
+      const chat = model.startChat({
+        history: history,
+        generationConfig: config
+      });
+
+      logger.info('Chat multimodal iniciado con historial', {
+        conversationId: conversation._id,
+        historyLength: history.length
+      });
+
+      // Obtener stream
+      const result = await chat.sendMessageStream(parts);
+
       let fullResponse = '';
       let chunkCount = 0;
-
-      const result = await geminiClient.generateMultimodalContentStream(parts, config);
 
       for await (const chunk of result.stream) {
         const chunkText = chunk.text();
@@ -194,12 +280,18 @@ class StreamResponseService {
         });
       }
 
+      // Obtener respuesta final
+      const finalResponse = await result.response;
+      const assistantTokens = finalResponse.usageMetadata?.candidatesTokenCount || 
+                              finalResponse.usageMetadata?.totalTokenCount || 
+                              await geminiClient.countTokens(fullResponse);
+
       const assistantMessage = await messageService.createMessage({
         conversationId: conversation._id,
         role: 'assistant',
         content: fullResponse,
         type: 'multimodal',
-        tokens: await geminiClient.countTokens(fullResponse)
+        tokens: assistantTokens
       });
 
       await conversationService.addMessageToConversation(
@@ -207,8 +299,15 @@ class StreamResponseService {
         assistantMessage._id
       );
 
-      const totalTokens = userMessage.tokens + assistantMessage.tokens;
-      await conversationService.updateTokenUsage(conversation._id, totalTokens);
+      const totalTokens = userMessage.tokens + assistantTokens;
+      await conversationService.updateTokenUsage(conversation._id, assistantTokens);
+
+      logger.info('Streaming multimodal completado', {
+        conversationId: conversation._id,
+        messageId: assistantMessage._id,
+        chunks: chunkCount,
+        tokens: totalTokens
+      });
 
       return {
         response: fullResponse,
@@ -217,7 +316,7 @@ class StreamResponseService {
         chunks: chunkCount,
         tokens: {
           prompt: userMessage.tokens,
-          completion: assistantMessage.tokens,
+          completion: assistantTokens,
           total: totalTokens
         },
         metadata: {
@@ -225,120 +324,30 @@ class StreamResponseService {
           streamingMode: true,
           multimodal: true,
           attachmentCount: attachments.length,
+          historyLength: history.length,
+          totalMessages: history.length + 2,
+          isNewConversation,
+          usingPersonalApiKey: apiKey !== geminiClient.defaultApiKey,
           timestamp: new Date()
         }
       };
     } catch (error) {
+      logger.error('Error en streaming multimodal:', error);
       throw new Error(`Error en streaming multimodal: ${error.message}`);
     }
   }
 
   /**
-   * Continua una conversacion en modo streaming
+   * Continua una conversacion en modo streaming (DEPRECADO - usar streamText o streamMultimodal)
+   * Este metodo se mantiene por compatibilidad pero ahora streamText ya incluye historial automaticamente
    * @param {Object} data - Datos para continuar conversacion
-   * @param {string} data.prompt - Nuevo prompt
-   * @param {string} data.conversationId - ID de conversacion existente
-   * @param {string} data.userId - ID del usuario
-   * @param {Function} data.onChunk - Callback para cada chunk recibido
-   * @param {Object} data.config - Configuracion opcional
    * @returns {Promise<Object>} - Respuesta completa y metadata
    */
   async continueConversationStream(data) {
-    try {
-      const { prompt, conversationId, userId, onChunk, config = {} } = data;
-
-      if (!prompt || !conversationId || !userId) {
-        throw new Error('prompt, conversationId y userId son requeridos');
-      }
-
-      if (typeof onChunk !== 'function') {
-        throw new Error('onChunk debe ser una funcion');
-      }
-
-      const conversation = await conversationService.getConversationById(conversationId, userId);
-      if (!conversation) {
-        throw new Error('Conversacion no encontrada');
-      }
-
-      const messages = await messageService.getMessagesByConversation(conversationId);
-      
-      const history = messages.map(msg => ({
-        role: msg.role,
-        parts: [{ text: msg.content }]
-      }));
-
-      const userMessage = await messageService.createMessage({
-        conversationId: conversation._id,
-        role: 'user',
-        content: prompt,
-        type: 'text',
-        tokens: await geminiClient.countTokens(prompt)
-      });
-
-      await conversationService.addMessageToConversation(
-        conversation._id,
-        userMessage._id
-      );
-
-      let fullResponse = '';
-      let chunkCount = 0;
-
-      const result = await geminiClient.generateContentStreamWithHistory(
-        prompt,
-        history,
-        config
-      );
-
-      for await (const chunk of result.stream) {
-        const chunkText = chunk.text();
-        fullResponse += chunkText;
-        chunkCount++;
-
-        onChunk({
-          chunk: chunkText,
-          accumulated: fullResponse,
-          chunkNumber: chunkCount,
-          conversationId: conversation._id
-        });
-      }
-
-      const assistantMessage = await messageService.createMessage({
-        conversationId: conversation._id,
-        role: 'assistant',
-        content: fullResponse,
-        type: 'text',
-        tokens: await geminiClient.countTokens(fullResponse)
-      });
-
-      await conversationService.addMessageToConversation(
-        conversation._id,
-        assistantMessage._id
-      );
-
-      const totalTokens = userMessage.tokens + assistantMessage.tokens;
-      await conversationService.updateTokenUsage(conversation._id, totalTokens);
-
-      return {
-        response: fullResponse,
-        conversationId: conversation._id,
-        messageId: assistantMessage._id,
-        chunks: chunkCount,
-        tokens: {
-          prompt: userMessage.tokens,
-          completion: assistantMessage.tokens,
-          total: totalTokens
-        },
-        metadata: {
-          model: geminiClient.model,
-          streamingMode: true,
-          continuedConversation: true,
-          messageCount: messages.length + 2,
-          timestamp: new Date()
-        }
-      };
-    } catch (error) {
-      throw new Error(`Error continuando conversacion en streaming: ${error.message}`);
-    }
+    logger.warn('continueConversationStream esta deprecado. Use streamText que ya incluye historial automaticamente');
+    
+    // Simplemente redirigir a streamText que ahora maneja historial
+    return this.streamText(data);
   }
 
   /**

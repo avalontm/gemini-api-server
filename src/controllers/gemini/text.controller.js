@@ -1,35 +1,26 @@
 // src/controllers/gemini/text.controller.js
 
 const textGenerationService = require('../../services/gemini/textGeneration.service');
-const streamResponseService = require('../../services/gemini/streamResponse.service');
-const { validationResult } = require('express-validator');
+const messageService = require('../../services/database/message.service');
+const conversationService = require('../../services/database/conversation.service');
+const geminiClient = require('../../services/gemini/geminiClient.service');
+const markdownProcessor = require('../../services/utils/markdownProcessor.service');
 const logger = require('../../utils/logger');
 
 /**
- * Generar texto (respuesta completa)
- * @route   POST /api/gemini/text
- * @access  Private
+ * Generar texto (respuesta completa) con contexto academico
  */
-const generateText = async (req, res, next) => {
+const generateText = async (req, res) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Errores de validacion',
-        errors: errors.array(),
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const { prompt, conversationId, config } = req.body;
-    const userId = req.user.id;
-
-    logger.info('Generando texto', { 
-      userId, 
+    const { 
+      prompt, 
       conversationId, 
-      promptLength: prompt?.length 
-    });
+      temperature, 
+      maxTokens,
+      area,
+      additionalContext 
+    } = req.body;
+    const userId = req.user.id;
 
     if (!prompt) {
       return res.status(400).json({
@@ -38,57 +29,83 @@ const generateText = async (req, res, next) => {
         timestamp: new Date().toISOString()
       });
     }
+
+    textGenerationService.validatePromptLength(prompt);
+
+    const config = {
+      temperature: temperature || 0.7,
+      maxOutputTokens: maxTokens || 2048
+    };
+
+    logger.info('Generando texto academico', {
+      userId,
+      conversationId,
+      area,
+      promptLength: prompt.length
+    });
 
     const result = await textGenerationService.generateText({
       prompt,
       userId,
       conversationId,
-      config
+      config,
+      area,
+      additionalContext,
+      user: req.user
     });
 
-    logger.info('Texto generado exitosamente', { 
-      userId, 
+    // POST-PROCESAR el contenido markdown
+    const processedResponse = markdownProcessor.process(result.response);
+    
+    // Actualizar el mensaje en la base de datos con el contenido procesado
+    if (result.messageId) {
+      await messageService.updateMessage(result.messageId, {
+        content: processedResponse
+      });
+    }
+
+    logger.info('Texto generado y procesado exitosamente', {
+      userId,
       conversationId: result.conversationId,
-      tokens: result.tokens.total 
+      tokens: result.tokens.total,
+      usingPersonalApiKey: result.metadata.usingPersonalApiKey,
+      contentProcessed: true
     });
 
     res.status(200).json({
       success: true,
       message: 'Texto generado exitosamente',
-      data: result,
+      data: {
+        ...result,
+        response: processedResponse
+      },
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    logger.error('Error generando texto:', error);
-    next(error);
+    logger.error('Error en generateText:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error generando texto',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      timestamp: new Date().toISOString()
+    });
   }
 };
 
 /**
- * Generar texto con streaming (palabra por palabra)
- * @route   POST /api/gemini/text/stream
- * @access  Private
+ * Generar texto con streaming (palabra por palabra) con contexto academico
  */
-const generateTextStream = async (req, res, next) => {
+const generateTextStream = async (req, res) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Errores de validacion',
-        errors: errors.array(),
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const { prompt, conversationId, config } = req.body;
+    const { 
+      prompt, 
+      conversationId, 
+      temperature, 
+      maxTokens,
+      area,
+      additionalContext 
+    } = req.body;
     const userId = req.user.id;
-
-    logger.info('Iniciando generacion con streaming', { 
-      userId, 
-      conversationId,
-      promptLength: prompt?.length 
-    });
 
     if (!prompt) {
       return res.status(400).json({
@@ -98,132 +115,166 @@ const generateTextStream = async (req, res, next) => {
       });
     }
 
-    // Setup SSE headers
+    textGenerationService.validatePromptLength(prompt);
+
+    const config = {
+      temperature: temperature || 0.7,
+      maxOutputTokens: maxTokens || 2048
+    };
+
+    logger.info('Iniciando generacion con streaming academico', {
+      userId,
+      conversationId,
+      area,
+      promptLength: prompt.length
+    });
+
+    // Configurar headers para SSE (Server-Sent Events)
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
-    res.flushHeaders();
 
-    let hasStarted = false;
-    let currentConversationId = conversationId;
+    // Iniciar el stream
+    const result = await textGenerationService.generateTextStream({
+      prompt,
+      userId,
+      conversationId,
+      config,
+      area,
+      additionalContext,
+      user: req.user
+    });
 
-    try {
-      // Use streamResponseService with callback
-      const result = await streamResponseService.streamText({
-        prompt,
-        userId,
-        conversationId,
-        config: streamResponseService.validateStreamConfig(config || {}),
-        onChunk: (data) => {
-          // Send start event on first chunk
-          if (!hasStarted) {
-            hasStarted = true;
-            currentConversationId = data.conversationId;
-            
-            res.write(`data: ${JSON.stringify({
-              type: 'start',
-              conversationId: data.conversationId,
-              metadata: {
-                model: 'gemini-pro',
-                streamingMode: true
-              },
-              timestamp: new Date().toISOString()
-            })}\n\n`);
-          }
+    const { 
+      stream, 
+      conversationId: convId, 
+      userMessageId, 
+      metadata 
+    } = result;
 
-          // Send chunk event
-          res.write(`data: ${JSON.stringify({
-            type: 'chunk',
-            text: data.chunk,
-            timestamp: new Date().toISOString()
-          })}\n\n`);
-        }
-      });
+    // Enviar metadata inicial
+    res.write(`data: ${JSON.stringify({
+      type: 'start',
+      conversationId: convId,
+      userMessageId,
+      metadata: {
+        ...metadata,
+        model: 'gemini-academic',
+        academicMode: true
+      },
+      timestamp: new Date().toISOString()
+    })}\n\n`);
 
-      logger.info('Streaming completado exitosamente', {
-        userId,
-        conversationId: result.conversationId,
-        messageId: result.messageId,
-        chunks: result.chunks,
-        tokens: result.tokens.total
-      });
+    let fullText = '';
+    let chunkCount = 0;
 
-      // Send end event
+    // Procesar el stream
+    for await (const chunk of stream.stream) {
+      const chunkText = chunk.text();
+      fullText += chunkText;
+      chunkCount++;
+
+      // Enviar cada chunk al cliente SIN procesar (durante streaming)
       res.write(`data: ${JSON.stringify({
-        type: 'end',
-        messageId: result.messageId,
-        conversationId: result.conversationId,
-        tokens: result.tokens,
-        fullText: result.response,
-        chunks: result.chunks,
+        type: 'chunk',
+        text: chunkText,
+        chunkNumber: chunkCount,
         timestamp: new Date().toISOString()
       })}\n\n`);
-
-      res.end();
-
-    } catch (streamError) {
-      logger.error('Error procesando stream:', streamError);
-      
-      res.write(`data: ${JSON.stringify({
-        type: 'error',
-        message: streamError.message || 'Error procesando el stream',
-        timestamp: new Date().toISOString()
-      })}\n\n`);
-      
-      res.end();
     }
 
+    // Obtener respuesta final para tokens
+    const finalResponse = await stream.response;
+    const assistantTokens = finalResponse.usageMetadata?.candidatesTokenCount || 
+                            finalResponse.usageMetadata?.totalTokenCount || 
+                            await geminiClient.countTokens(fullText);
+
+    // POST-PROCESAR el contenido completo al finalizar streaming
+    const processedFullText = markdownProcessor.processStreamComplete(fullText);
+
+    logger.info('Contenido procesado despues de streaming', {
+      originalLength: fullText.length,
+      processedLength: processedFullText.length,
+      chunks: chunkCount
+    });
+
+    // Guardar el mensaje procesado en la base de datos
+    const assistantMessage = await messageService.createMessage({
+      conversationId: convId,
+      role: 'assistant',
+      content: processedFullText,
+      type: 'text',
+      tokens: assistantTokens
+    });
+
+    await conversationService.addMessageToConversation(convId, assistantMessage._id);
+
+    const userMessage = await messageService.getMessageById(userMessageId);
+    const totalTokens = (userMessage.tokens || 0) + assistantTokens;
+    await conversationService.updateTokenUsage(convId, assistantTokens);
+
+    logger.info('Streaming completado exitosamente', {
+      userId,
+      conversationId: convId,
+      messageId: assistantMessage._id,
+      chunks: chunkCount,
+      tokens: totalTokens,
+      usingPersonalApiKey: metadata.usingPersonalApiKey,
+      contentProcessed: true
+    });
+
+    // Enviar mensaje final con contenido procesado
+    res.write(`data: ${JSON.stringify({
+      type: 'end',
+      messageId: assistantMessage._id,
+      conversationId: convId,
+      tokens: {
+        prompt: userMessage.tokens || 0,
+        completion: assistantTokens,
+        total: totalTokens
+      },
+      fullText: processedFullText,
+      chunks: chunkCount,
+      metadata: metadata,
+      timestamp: new Date().toISOString()
+    })}\n\n`);
+
+    res.end();
   } catch (error) {
     logger.error('Error en generateTextStream:', error);
     
-    if (res.headersSent) {
-      res.write(`data: ${JSON.stringify({
-        type: 'error',
-        message: error.message || 'Error generando texto con streaming',
-        timestamp: new Date().toISOString()
-      })}\n\n`);
-      res.end();
-    } else {
-      res.status(500).json({
-        success: false,
-        message: error.message || 'Error generando texto con streaming',
-        timestamp: new Date().toISOString(),
-        error: process.env.NODE_ENV === 'development' ? {
-          name: error.name,
-          message: error.message,
-          stack: error.stack
-        } : undefined
-      });
+    // Enviar error a través del stream
+    if (!res.headersSent) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
     }
+
+    res.write(`data: ${JSON.stringify({
+      type: 'error',
+      message: error.message,
+      timestamp: new Date().toISOString()
+    })}\n\n`);
+    
+    res.end();
   }
 };
 
 /**
- * Continuar conversación existente
- * @route   POST /api/gemini/text/continue
- * @access  Private
+ * Continuar conversacion existente con contexto academico
  */
-const continueConversation = async (req, res, next) => {
+const continueConversation = async (req, res) => {
   try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Errores de validacion',
-        errors: errors.array(),
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const { prompt, conversationId, config } = req.body;
-    const userId = req.user.id;
-
-    logger.info('Continuando conversacion', { 
-      userId, 
+    const { 
       conversationId, 
-      promptLength: prompt?.length 
-    });
+      prompt, 
+      temperature, 
+      maxTokens,
+      area,
+      additionalContext 
+    } = req.body;
+    const userId = req.user.id;
 
     if (!conversationId || !prompt) {
       return res.status(400).json({
@@ -233,166 +284,70 @@ const continueConversation = async (req, res, next) => {
       });
     }
 
-    // Use the textGenerationService for non-streaming continuation
-    const result = await textGenerationService.continueConversation({
-      prompt,
-      conversationId,
+    textGenerationService.validatePromptLength(prompt);
+
+    const config = {
+      temperature: temperature || 0.7,
+      maxOutputTokens: maxTokens || 2048
+    };
+
+    logger.info('Continuando conversacion academica', {
       userId,
-      config
+      conversationId,
+      promptLength: prompt.length
     });
 
-    logger.info('Conversacion continuada exitosamente', {
-      userId,
+    const result = await textGenerationService.continueConversation({
       conversationId,
-      messageCount: result.metadata?.messageCount,
-      tokens: result.tokens.total
+      prompt,
+      userId,
+      config,
+      area,
+      additionalContext,
+      user: req.user
+    });
+
+    // POST-PROCESAR el contenido markdown
+    const processedResponse = markdownProcessor.process(result.response);
+    
+    // Actualizar el mensaje en la base de datos con el contenido procesado
+    if (result.messageId) {
+      await messageService.updateMessage(result.messageId, {
+        content: processedResponse
+      });
+    }
+
+    logger.info('Conversacion continuada y procesada exitosamente', {
+      userId,
+      conversationId: result.conversationId,
+      messageCount: result.metadata.totalMessages,
+      tokens: result.tokens.total,
+      usingPersonalApiKey: result.metadata.usingPersonalApiKey,
+      contentProcessed: true
     });
 
     res.status(200).json({
       success: true,
       message: 'Conversacion continuada exitosamente',
-      data: result,
+      data: {
+        ...result,
+        response: processedResponse
+      },
       timestamp: new Date().toISOString()
     });
   } catch (error) {
-    logger.error('Error continuando conversacion:', error);
-    next(error);
-  }
-};
-
-/**
- * Continuar conversación con streaming
- * @route   POST /api/gemini/text/continue/stream
- * @access  Private
- */
-const continueConversationStream = async (req, res, next) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Errores de validacion',
-        errors: errors.array(),
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const { prompt, conversationId, config } = req.body;
-    const userId = req.user.id;
-
-    logger.info('Continuando conversacion con streaming', { 
-      userId, 
-      conversationId,
-      promptLength: prompt?.length 
+    logger.error('Error en continueConversation:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error continuando conversacion',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      timestamp: new Date().toISOString()
     });
-
-    if (!conversationId || !prompt) {
-      return res.status(400).json({
-        success: false,
-        message: 'conversationId y prompt son requeridos',
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    // Setup SSE headers
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
-    res.flushHeaders();
-
-    let hasStarted = false;
-
-    try {
-      const result = await streamResponseService.continueConversationStream({
-        prompt,
-        conversationId,
-        userId,
-        config: streamResponseService.validateStreamConfig(config || {}),
-        onChunk: (data) => {
-          if (!hasStarted) {
-            hasStarted = true;
-            
-            res.write(`data: ${JSON.stringify({
-              type: 'start',
-              conversationId: data.conversationId,
-              metadata: {
-                model: 'gemini-pro',
-                streamingMode: true,
-                continuedConversation: true
-              },
-              timestamp: new Date().toISOString()
-            })}\n\n`);
-          }
-
-          res.write(`data: ${JSON.stringify({
-            type: 'chunk',
-            text: data.chunk,
-            timestamp: new Date().toISOString()
-          })}\n\n`);
-        }
-      });
-
-      logger.info('Conversacion con streaming completada', {
-        userId,
-        conversationId: result.conversationId,
-        messageId: result.messageId,
-        tokens: result.tokens.total
-      });
-
-      res.write(`data: ${JSON.stringify({
-        type: 'end',
-        messageId: result.messageId,
-        conversationId: result.conversationId,
-        tokens: result.tokens,
-        fullText: result.response,
-        chunks: result.chunks,
-        metadata: result.metadata,
-        timestamp: new Date().toISOString()
-      })}\n\n`);
-
-      res.end();
-
-    } catch (streamError) {
-      logger.error('Error en stream de continuacion:', streamError);
-      
-      res.write(`data: ${JSON.stringify({
-        type: 'error',
-        message: streamError.message || 'Error procesando el stream',
-        timestamp: new Date().toISOString()
-      })}\n\n`);
-      
-      res.end();
-    }
-
-  } catch (error) {
-    logger.error('Error continuando conversacion con streaming:', error);
-    
-    if (res.headersSent) {
-      res.write(`data: ${JSON.stringify({
-        type: 'error',
-        message: error.message || 'Error continuando conversacion',
-        timestamp: new Date().toISOString()
-      })}\n\n`);
-      res.end();
-    } else {
-      res.status(500).json({
-        success: false,
-        message: error.message || 'Error continuando conversacion con streaming',
-        timestamp: new Date().toISOString(),
-        error: process.env.NODE_ENV === 'development' ? {
-          name: error.name,
-          message: error.message,
-          stack: error.stack
-        } : undefined
-      });
-    }
   }
 };
 
 module.exports = {
   generateText,
   generateTextStream,
-  continueConversation,
-  continueConversationStream
+  continueConversation
 };
