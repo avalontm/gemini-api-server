@@ -11,14 +11,11 @@ function safeImport(path, name) {
     const module = require(path);
     console.log(`[OK] ${name} importado correctamente`);
     
-    // CORRECCION: Un router de Express es un objeto, no una funcion
-    // Verificar que tenga la estructura de un router
     if (!module) {
       console.error(`[ERROR] ${name} es null o undefined`);
       return express.Router();
     }
     
-    // Los routers de Express tienen metodos como 'get', 'post', etc.
     if (typeof module.get !== 'function' || typeof module.post !== 'function') {
       console.error(`[ERROR] ${name} NO parece ser un router de Express valido`);
       return express.Router();
@@ -46,6 +43,7 @@ const conversationRoutes = safeImport('./api/conversation.routes', 'conversation
 const exportRoutes = safeImport('./api/export.routes', 'exportRoutes');
 const reportRoutes = safeImport('./api/report.routes', 'reportRoutes');
 const userRoutes = safeImport('./api/user.routes', 'userRoutes');
+const apiKeyRoutes = safeImport('./api/apiKey.routes', 'apiKeyRoutes');
 
 console.log('=== RUTAS IMPORTADAS ===\n');
 
@@ -97,6 +95,15 @@ router.get('/', (req, res) => {
         preferences: 'PUT /api/user/preferences',
         stats: 'GET /api/user/stats',
       },
+      apiKey: {
+        info: 'GET /api/apikey/info',
+        set: 'POST /api/apikey/set',
+        validate: 'POST /api/apikey/validate',
+        toggle: 'POST /api/apikey/toggle',
+        delete: 'DELETE /api/apikey/delete',
+        stats: 'GET /api/apikey/stats',
+        preferences: 'PUT /api/apikey/preferences',
+      },
     },
   });
 });
@@ -123,13 +130,14 @@ geminiRouter.use('/pdf', pdfRoutes);
 router.use('/gemini', geminiRouter);
 
 /**
- * Rutas de conversaciones, exportacion, reportes y usuario
+ * Rutas de conversaciones, exportacion, reportes, usuario y API keys
  */
-console.log('Montando rutas de conversaciones, reportes y usuario...');
+console.log('Montando rutas de conversaciones, reportes, usuario y API keys...');
 router.use('/conversations', conversationRoutes);
 router.use('/export', exportRoutes);
 router.use('/reports', reportRoutes);
 router.use('/user', userRoutes);
+router.use('/apikey', apiKeyRoutes);
 
 console.log('Todas las rutas montadas exitosamente\n');
 

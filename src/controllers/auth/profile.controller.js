@@ -32,6 +32,7 @@ const getProfile = async (req, res, next) => {
           avatar: user.avatar,
           telefono: user.telefono || null,
           role: user.role,
+          preferences: user.preferences,
           isActive: user.isActive,
           isVerified: user.isVerified,
           lastLogin: user.lastLogin,
@@ -226,6 +227,109 @@ const changePassword = async (req, res, next) => {
 };
 
 /**
+ * Actualizar preferencias del usuario
+ */
+const updatePreferences = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const { theme, language, notifications } = req.body;
+
+    // Validar que al menos se proporcione una preferencia
+    if (!theme && !language && !notifications) {
+      return res.status(400).json({
+        success: false,
+        message: 'Debe proporcionar al menos una preferencia para actualizar'
+      });
+    }
+
+    const User = require('../../models/User.model');
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuario no encontrado'
+      });
+    }
+
+    // Actualizar preferencias
+    if (theme !== undefined) {
+      const validThemes = ['light', 'dark', 'system'];
+      if (!validThemes.includes(theme)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Tema invalido. Valores permitidos: light, dark, system'
+        });
+      }
+      user.preferences.theme = theme;
+    }
+
+    if (language !== undefined) {
+      const validLanguages = ['es', 'en'];
+      if (!validLanguages.includes(language)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Idioma invalido. Valores permitidos: es, en'
+        });
+      }
+      user.preferences.language = language;
+    }
+
+    if (notifications !== undefined) {
+      if (typeof notifications !== 'object') {
+        return res.status(400).json({
+          success: false,
+          message: 'Las notificaciones deben ser un objeto'
+        });
+      }
+
+      // Actualizar notificaciones solo si se proporcionan
+      if (notifications.email !== undefined) {
+        user.preferences.notifications.email = Boolean(notifications.email);
+      }
+      if (notifications.push !== undefined) {
+        user.preferences.notifications.push = Boolean(notifications.push);
+      }
+      if (notifications.updates !== undefined) {
+        user.preferences.notifications.updates = Boolean(notifications.updates);
+      }
+      if (notifications.tips !== undefined) {
+        user.preferences.notifications.tips = Boolean(notifications.tips);
+      }
+    }
+
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Preferencias actualizadas exitosamente',
+      data: {
+        preferences: user.preferences
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Obtener estadisticas del usuario
+ */
+const getUserStats = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const stats = await userService.getUserStats(userId);
+
+    res.status(200).json({
+      success: true,
+      data: stats
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * Obtener usuario por numero de control (solo para admins)
  */
 const getUserByNumeroControl = async (req, res, next) => {
@@ -279,6 +383,8 @@ module.exports = {
   getProfile,
   updateProfile,
   changePassword,
+  updatePreferences,
+  getUserStats,
   getUserByNumeroControl,
   getUsersByCarrera
 };

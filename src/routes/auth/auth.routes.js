@@ -19,6 +19,7 @@ const { register } = require('../../controllers/auth/register.controller');
 const { login } = require('../../controllers/auth/login.controller');
 const { logout, logoutAll } = require('../../controllers/auth/logout.controller');
 const { getProfile, updateProfile, changePassword } = require('../../controllers/auth/profile.controller');
+const { forgotPassword, resetPassword } = require('../../controllers/auth/password.controller');
 
 /**
  * @swagger
@@ -60,28 +61,6 @@ const { getProfile, updateProfile, changePassword } = require('../../controllers
  *                 type: string
  *                 description: Carrera del alumno (debe ser una carrera válida del TecNM)
  *                 example: "Ingeniería en Sistemas Computacionales"
- *                 enum:
- *                   - Ingeniería en Innovación Agrícola Sustentable
- *                   - Ingeniería Electromecánica
- *                   - Ingeniería Electrónica
- *                   - Ingeniería en Gestión Empresarial
- *                   - Ingeniería Industrial
- *                   - Ingeniería Mecatrónica
- *                   - Ingeniería en Sistemas Computacionales
- *                   - Licenciatura en Administración
- *                   - Ingeniería Industrial TecNM-Virtual
- *                   - Ingeniería en Sistemas Computacionales TecNM-Virtual
- *                   - Ingeniería Electromecánica en Playas de Rosarito
- *                   - Ingeniería Industrial en Playas de Rosarito
- *                   - Ingeniería en Sistemas Computacionales en Playas de Rosarito
- *                   - Licenciatura en Administración en Playas de Rosarito
- *                   - Ingeniería en Sistemas Computacionales en Tecate
- *                   - Ingeniería Industrial en Tecate
- *                   - Licenciatura en Administración en Tecate
- *                   - Especialización en Industria Aeroespacial
- *                   - Maestría en Ingeniería Aeroespacial
- *                   - Maestría en Ciencias en Ingeniería Mecatrónica
- *                   - Doctorado en Ciencias en Ingeniería Mecatrónica
  *               semestre:
  *                 type: number
  *                 minimum: 1
@@ -96,85 +75,11 @@ const { getProfile, updateProfile, changePassword } = require('../../controllers
  *               avatar:
  *                 type: string
  *                 description: Imagen de perfil en formato base64 (opcional)
- *                 example: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
  *     responses:
  *       201:
  *         description: Usuario registrado exitosamente
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: "Usuario registrado exitosamente"
- *                 data:
- *                   type: object
- *                   properties:
- *                     user:
- *                       type: object
- *                       properties:
- *                         id:
- *                           type: string
- *                           example: "507f1f77bcf86cd799439011"
- *                         numeroControl:
- *                           type: string
- *                           example: "23760194"
- *                         email:
- *                           type: string
- *                           example: "23760194@ite.edu.mx"
- *                         nombreCompleto:
- *                           type: string
- *                           example: "Juan Pérez López"
- *                         carrera:
- *                           type: string
- *                           example: "Ingeniería en Sistemas Computacionales"
- *                         semestre:
- *                           type: number
- *                           example: 5
- *                         avatar:
- *                           type: string
- *                           nullable: true
- *                         telefono:
- *                           type: string
- *                           nullable: true
- *                           example: "6461234567"
- *                         role:
- *                           type: string
- *                           example: "alumno"
- *                         isActive:
- *                           type: boolean
- *                           example: true
- *                         isVerified:
- *                           type: boolean
- *                           example: false
- *                         createdAt:
- *                           type: string
- *                           format: date-time
- *                     token:
- *                       type: string
- *                       description: Token JWT para autenticación
- *                       example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
  *       400:
  *         description: Error de validación o datos inválidos
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: false
- *                 message:
- *                   type: string
- *                   example: "El número de control ya está registrado"
- *                 errors:
- *                   type: array
- *                   items:
- *                     type: object
  *       409:
  *         description: El número de control o email ya existe
  *       500:
@@ -202,19 +107,14 @@ router.post(
  *           schema:
  *             type: object
  *             required:
- *               - numeroControl
+ *               - email
  *               - password
  *             properties:
- *               numeroControl:
- *                 type: string
- *                 pattern: "^\\d{8}$"
- *                 description: Número de control del alumno (también se puede usar email)
- *                 example: "23760194"
  *               email:
  *                 type: string
  *                 format: email
- *                 description: Email institucional (alternativa al número de control)
- *                 example: "23760194@ite.edu.mx"
+ *                 description: Email institucional
+ *                 example: "al23760194@ite.edu.mx"
  *               password:
  *                 type: string
  *                 description: Contraseña del usuario
@@ -222,52 +122,8 @@ router.post(
  *     responses:
  *       200:
  *         description: Login exitoso
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: "Inicio de sesión exitoso"
- *                 data:
- *                   type: object
- *                   properties:
- *                     user:
- *                       type: object
- *                       properties:
- *                         id:
- *                           type: string
- *                         numeroControl:
- *                           type: string
- *                         email:
- *                           type: string
- *                         nombreCompleto:
- *                           type: string
- *                         carrera:
- *                           type: string
- *                         semestre:
- *                           type: number
- *                         role:
- *                           type: string
- *                     token:
- *                       type: string
  *       401:
  *         description: Credenciales inválidas
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: false
- *                 message:
- *                   type: string
- *                   example: "Credenciales inválidas"
  */
 router.post(
   '/login',
@@ -289,19 +145,8 @@ router.post(
  *     responses:
  *       200:
  *         description: Logout exitoso
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: "Sesión cerrada exitosamente"
  *       401:
- *         description: No autorizado - Token inválido o no proporcionado
+ *         description: No autorizado
  */
 router.post(
   '/logout',
@@ -314,24 +159,13 @@ router.post(
  * /api/auth/logout-all:
  *   post:
  *     summary: Cerrar todas las sesiones
- *     description: Cierra todas las sesiones activas del usuario autenticado en todos los dispositivos
+ *     description: Cierra todas las sesiones activas del usuario autenticado
  *     tags: [Auth]
  *     security:
  *       - bearerAuth: []
  *     responses:
  *       200:
  *         description: Todas las sesiones cerradas exitosamente
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: "Todas las sesiones cerradas exitosamente"
  *       401:
  *         description: No autorizado
  */
@@ -353,60 +187,6 @@ router.post(
  *     responses:
  *       200:
  *         description: Perfil obtenido exitosamente
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 data:
- *                   type: object
- *                   properties:
- *                     user:
- *                       type: object
- *                       properties:
- *                         id:
- *                           type: string
- *                         numeroControl:
- *                           type: string
- *                           example: "23760194"
- *                         email:
- *                           type: string
- *                           example: "23760194@ite.edu.mx"
- *                         nombreCompleto:
- *                           type: string
- *                           example: "Juan Pérez López"
- *                         carrera:
- *                           type: string
- *                           example: "Ingeniería en Sistemas Computacionales"
- *                         semestre:
- *                           type: number
- *                           example: 5
- *                         avatar:
- *                           type: string
- *                           nullable: true
- *                         telefono:
- *                           type: string
- *                           nullable: true
- *                           example: "6461234567"
- *                         role:
- *                           type: string
- *                           example: "alumno"
- *                         isActive:
- *                           type: boolean
- *                         isVerified:
- *                           type: boolean
- *                         lastLogin:
- *                           type: string
- *                           format: date-time
- *                         createdAt:
- *                           type: string
- *                           format: date-time
- *                         updatedAt:
- *                           type: string
- *                           format: date-time
  *       401:
  *         description: No autorizado
  */
@@ -421,7 +201,7 @@ router.get(
  * /api/auth/profile:
  *   put:
  *     summary: Actualizar perfil del usuario
- *     description: Actualiza la información del perfil del usuario autenticado. No se puede modificar numeroControl ni email.
+ *     description: Actualiza la información del perfil. No se puede modificar numeroControl ni email.
  *     tags: [Auth]
  *     security:
  *       - bearerAuth: []
@@ -434,52 +214,19 @@ router.get(
  *             properties:
  *               nombreCompleto:
  *                 type: string
- *                 minLength: 3
- *                 maxLength: 100
- *                 description: Nombre completo del alumno
- *                 example: "Juan Pérez López"
  *               carrera:
  *                 type: string
- *                 description: Carrera del alumno
- *                 example: "Ingeniería en Sistemas Computacionales"
  *               semestre:
  *                 type: number
- *                 minimum: 1
- *                 maximum: 12
- *                 description: Semestre actual
- *                 example: 6
  *               avatar:
  *                 type: string
- *                 description: Imagen de perfil en base64 (usar null para eliminar)
- *                 nullable: true
- *                 example: "data:image/png;base64,..."
  *               telefono:
  *                 type: string
- *                 pattern: "^[0-9]{10}$"
- *                 description: Teléfono de 10 dígitos (usar null para eliminar)
- *                 nullable: true
- *                 example: "6461234567"
  *     responses:
  *       200:
  *         description: Perfil actualizado exitosamente
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: "Perfil actualizado exitosamente"
- *                 data:
- *                   type: object
- *                   properties:
- *                     user:
- *                       type: object
  *       400:
- *         description: Error de validación o intento de modificar campos inmutables
+ *         description: Error de validación
  *       401:
  *         description: No autorizado
  */
@@ -494,7 +241,7 @@ router.put(
  * /api/auth/change-password:
  *   post:
  *     summary: Cambiar contraseña
- *     description: Permite al usuario cambiar su contraseña actual proporcionando la contraseña antigua y la nueva
+ *     description: Permite cambiar la contraseña actual
  *     tags: [Auth]
  *     security:
  *       - bearerAuth: []
@@ -510,44 +257,14 @@ router.put(
  *             properties:
  *               currentPassword:
  *                 type: string
- *                 description: Contraseña actual del usuario
- *                 example: "OldPassword123"
  *               newPassword:
  *                 type: string
  *                 minLength: 6
- *                 description: Nueva contraseña (mínimo 6 caracteres)
- *                 example: "NewPassword123"
- *               confirmPassword:
- *                 type: string
- *                 description: Confirmación de la nueva contraseña (opcional pero recomendado)
- *                 example: "NewPassword123"
  *     responses:
  *       200:
  *         description: Contraseña cambiada exitosamente
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: true
- *                 message:
- *                   type: string
- *                   example: "Contraseña actualizada exitosamente"
  *       400:
- *         description: Error de validación o contraseña actual incorrecta
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 success:
- *                   type: boolean
- *                   example: false
- *                 message:
- *                   type: string
- *                   example: "Contraseña actual incorrecta"
+ *         description: Contraseña actual incorrecta
  *       401:
  *         description: No autorizado
  */
@@ -571,6 +288,39 @@ router.post(
  *     responses:
  *       200:
  *         description: Usuario obtenido exitosamente
+ *       401:
+ *         description: No autorizado
+ */
+router.get(
+  '/me',
+  authenticate,
+  asyncHandler(getProfile)
+);
+
+/**
+ * @swagger
+ * /api/auth/forgot-password:
+ *   post:
+ *     summary: Solicitar restablecimiento de contraseña
+ *     description: Envia un email con instrucciones para restablecer la contraseña
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *             properties:
+ *               email:
+ *                 type: string
+ *                 format: email
+ *                 description: Email institucional del usuario
+ *                 example: "al23760194@ite.edu.mx"
+ *     responses:
+ *       200:
+ *         description: Email enviado exitosamente (o email no existe pero no se revela)
  *         content:
  *           application/json:
  *             schema:
@@ -579,18 +329,80 @@ router.post(
  *                 success:
  *                   type: boolean
  *                   example: true
- *                 data:
- *                   type: object
- *                   properties:
- *                     user:
- *                       type: object
- *       401:
- *         description: No autorizado
+ *                 message:
+ *                   type: string
+ *                   example: "Si el correo existe, recibiras instrucciones para restablecer tu contraseña"
+ *       400:
+ *         description: Error de validacion
+ *       500:
+ *         description: Error al enviar el correo
  */
-router.get(
-  '/me',
-  authenticate,
-  asyncHandler(getProfile)
+router.post(
+  '/forgot-password',
+  authLimiter,
+  asyncHandler(forgotPassword)
+);
+
+/**
+ * @swagger
+ * /api/auth/reset-password:
+ *   post:
+ *     summary: Restablecer contraseña con token
+ *     description: Restablece la contraseña usando el token recibido por email
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - token
+ *               - newPassword
+ *             properties:
+ *               token:
+ *                 type: string
+ *                 description: Token de restablecimiento recibido por email
+ *                 example: "abc123def456..."
+ *               newPassword:
+ *                 type: string
+ *                 minLength: 6
+ *                 description: Nueva contraseña (minimo 6 caracteres)
+ *                 example: "NewPassword123"
+ *     responses:
+ *       200:
+ *         description: Contraseña restablecida exitosamente
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "Contraseña restablecida exitosamente"
+ *       400:
+ *         description: Token invalido o expirado
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: false
+ *                 message:
+ *                   type: string
+ *                   example: "Token invalido o expirado"
+ *       500:
+ *         description: Error interno del servidor
+ */
+router.post(
+  '/reset-password',
+  authLimiter,
+  asyncHandler(resetPassword)
 );
 
 module.exports = router;

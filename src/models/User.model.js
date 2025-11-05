@@ -2,6 +2,7 @@
 
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const { USER_ROLES, CARRERAS, REGEX_PATTERNS } = require('../config/constants');
 
 const userSchema = new mongoose.Schema(
@@ -20,7 +21,7 @@ const userSchema = new mongoose.Schema(
       unique: true,
       trim: true,
       lowercase: true,
-      match: [/^\d{8}@ite\.edu\.mx$/, 'El email debe tener el formato: [numeroControl]@ite.edu.mx'],
+      match: [/^al\d{8}@ite\.edu\.mx$/, 'El email debe tener el formato: al[numeroControl]@ite.edu.mx'],
       index: true,
     },
     
@@ -74,6 +75,28 @@ const userSchema = new mongoose.Schema(
       default: USER_ROLES.ALUMNO,
     },
     
+    // Nueva seccion para API key personal de Gemini
+    geminiApiKey: {
+      type: String,
+      default: null,
+      select: false,
+    },
+    
+    geminiApiKeyStatus: {
+      isActive: {
+        type: Boolean,
+        default: false,
+      },
+      lastValidated: {
+        type: Date,
+        default: null,
+      },
+      lastError: {
+        type: String,
+        default: null,
+      },
+    },
+    
     preferences: {
       theme: {
         type: String,
@@ -90,7 +113,11 @@ const userSchema = new mongoose.Schema(
         push: { type: Boolean, default: false },
         updates: { type: Boolean, default: true },
         tips: { type: Boolean, default: true }
-      }
+      },
+      usePersonalApiKey: {
+        type: Boolean,
+        default: false,
+      },
     },
     
     isActive: {
@@ -158,8 +185,79 @@ userSchema.pre('save', async function (next) {
   }
 });
 
+userSchema.pre('save', function (next) {
+  if (!this.isModified('geminiApiKey')) {
+    return next();
+  }
+  
+  if (this.geminiApiKey && this.geminiApiKey.trim() !== '') {
+    try {
+      if (!this.geminiApiKey.includes(':')) {
+        this.geminiApiKey = this.encryptApiKey(this.geminiApiKey);
+      }
+    } catch (error) {
+      return next(error);
+    }
+  }
+  
+  next();
+});
+
 userSchema.methods.comparePassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
+};
+
+userSchema.methods.encryptApiKey = function (apiKey) {
+  const algorithm = 'aes-256-cbc';
+  const key = crypto.scryptSync(process.env.JWT_SECRET, 'salt', 32);
+  const iv = crypto.randomBytes(16);
+  
+  const cipher = crypto.createCipheriv(algorithm, key, iv);
+  let encrypted = cipher.update(apiKey, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  
+  return iv.toString('hex') + ':' + encrypted;
+};
+
+userSchema.methods.decryptApiKey = function (encryptedApiKey) {
+  if (!encryptedApiKey || encryptedApiKey.trim() === '') {
+    return null;
+  }
+  
+  try {
+    const algorithm = 'aes-256-cbc';
+    const key = crypto.scryptSync(process.env.JWT_SECRET, 'salt', 32);
+    
+    const parts = encryptedApiKey.split(':');
+    const iv = Buffer.from(parts.shift(), 'hex');
+    const encrypted = parts.join(':');
+    
+    const decipher = crypto.createDecipheriv(algorithm, key, iv);
+    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    
+    return decrypted;
+  } catch (error) {
+    console.error('Error desencriptando API key:', error.message);
+    return null;
+  }
+};
+
+userSchema.methods.getGeminiApiKey = function () {
+  if (this.preferences.usePersonalApiKey && this.geminiApiKey) {
+    const decryptedKey = this.decryptApiKey(this.geminiApiKey);
+    if (decryptedKey && this.geminiApiKeyStatus.isActive) {
+      return decryptedKey;
+    }
+  }
+  
+  return process.env.GEMINI_API_KEY;
+};
+
+userSchema.methods.hasPersonalApiKey = function () {
+  return !!(this.geminiApiKey && 
+            this.preferences.usePersonalApiKey && 
+            this.geminiApiKeyStatus.isActive);
 };
 
 userSchema.methods.toPublicJSON = function () {
@@ -177,6 +275,11 @@ userSchema.methods.toPublicJSON = function () {
     isActive: this.isActive,
     isVerified: this.isVerified,
     lastLogin: this.lastLogin,
+    geminiApiKeyStatus: {
+      hasPersonalKey: !!this.geminiApiKey,
+      isActive: this.geminiApiKeyStatus.isActive,
+      lastValidated: this.geminiApiKeyStatus.lastValidated,
+    },
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
   };

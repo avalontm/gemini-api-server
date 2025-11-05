@@ -4,22 +4,57 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 class GeminiClientService {
   constructor() {
-    this.apiKey = process.env.GEMINI_API_KEY;
+    this.defaultApiKey = process.env.GEMINI_API_KEY;
     this.model = process.env.GEMINI_MODEL || 'gemini-2.0-flash-exp';
     
-    if (!this.apiKey) {
-      throw new Error('GEMINI_API_KEY no esta configurada en las variables de entorno');
+    if (!this.defaultApiKey) {
+      console.warn('ADVERTENCIA: GEMINI_API_KEY no esta configurada en las variables de entorno');
     }
 
-    this.genAI = new GoogleGenerativeAI(this.apiKey);
-    this.generativeModel = null;
+    // Cache de clientes por API key (para optimizar)
+    this.clientCache = new Map();
+  }
+
+  /**
+   * Obtiene o crea un cliente de Gemini para una API key especifica
+   * @param {string} apiKey - API key a usar (opcional, usa la del servidor por defecto)
+   * @returns {GoogleGenerativeAI} - Cliente de Gemini
+   */
+  getClient(apiKey = null) {
+    const keyToUse = apiKey || this.defaultApiKey;
+    
+    if (!keyToUse) {
+      throw new Error('No hay API key disponible. Configure GEMINI_API_KEY o proporcione una API key personal');
+    }
+
+    // Verificar si ya existe en cache
+    if (this.clientCache.has(keyToUse)) {
+      return this.clientCache.get(keyToUse);
+    }
+
+    // Crear nuevo cliente y guardarlo en cache
+    const client = new GoogleGenerativeAI(keyToUse);
+    this.clientCache.set(keyToUse, client);
+
+    // Limitar el tamano del cache (maximo 50 clientes)
+    if (this.clientCache.size > 50) {
+      const firstKey = this.clientCache.keys().next().value;
+      this.clientCache.delete(firstKey);
+    }
+
+    return client;
   }
 
   /**
    * Inicializa el modelo generativo
+   * @param {Object} config - Configuracion del modelo
+   * @param {string} apiKey - API key a usar (opcional)
+   * @returns {Object} - Modelo generativo
    */
-  initializeModel(config = {}) {
+  initializeModel(config = {}, apiKey = null) {
     try {
+      const client = this.getClient(apiKey);
+      
       const defaultConfig = {
         model: this.model,
         generationConfig: {
@@ -48,33 +83,36 @@ class GeminiClientService {
         ]
       };
 
-      this.generativeModel = this.genAI.getGenerativeModel(defaultConfig);
-      return this.generativeModel;
+      return client.getGenerativeModel(defaultConfig);
     } catch (error) {
       throw new Error(`Error inicializando modelo: ${error.message}`);
     }
   }
 
   /**
-   * Obtiene el modelo generativo (inicializa si es necesario)
+   * Obtiene el modelo generativo
+   * @param {Object} config - Configuracion del modelo
+   * @param {string} apiKey - API key a usar (opcional)
+   * @returns {Object} - Modelo generativo
    */
-  getModel(config = {}) {
-    if (!this.generativeModel || Object.keys(config).length > 0) {
-      return this.initializeModel(config);
-    }
-    return this.generativeModel;
+  getModel(config = {}, apiKey = null) {
+    return this.initializeModel(config, apiKey);
   }
 
   /**
    * Genera contenido a partir de un prompt de texto
+   * @param {string} prompt - Texto del prompt
+   * @param {Object} config - Configuracion del modelo
+   * @param {string} apiKey - API key a usar (opcional)
+   * @returns {Promise<Object>} - Respuesta generada
    */
-  async generateContent(prompt, config = {}) {
+  async generateContent(prompt, config = {}, apiKey = null) {
     try {
       if (!prompt || typeof prompt !== 'string') {
         throw new Error('Prompt invalido');
       }
 
-      const model = this.getModel(config);
+      const model = this.getModel(config, apiKey);
       const result = await model.generateContent(prompt);
       const response = await result.response;
       const text = response.text();
@@ -92,14 +130,18 @@ class GeminiClientService {
 
   /**
    * Genera contenido con streaming
+   * @param {string} prompt - Texto del prompt
+   * @param {Object} config - Configuracion del modelo
+   * @param {string} apiKey - API key a usar (opcional)
+   * @returns {Promise<Object>} - Stream de respuesta
    */
-  async generateContentStream(prompt, config = {}) {
+  async generateContentStream(prompt, config = {}, apiKey = null) {
     try {
       if (!prompt || typeof prompt !== 'string') {
         throw new Error('Prompt invalido');
       }
 
-      const model = this.getModel(config);
+      const model = this.getModel(config, apiKey);
       const result = await model.generateContentStream(prompt);
 
       return result;
@@ -110,14 +152,18 @@ class GeminiClientService {
 
   /**
    * Genera contenido multimodal (texto + imagenes/audio/pdf)
+   * @param {Array} parts - Array de partes del contenido
+   * @param {Object} config - Configuracion del modelo
+   * @param {string} apiKey - API key a usar (opcional)
+   * @returns {Promise<Object>} - Respuesta generada
    */
-  async generateMultimodalContent(parts, config = {}) {
+  async generateMultimodalContent(parts, config = {}, apiKey = null) {
     try {
       if (!Array.isArray(parts) || parts.length === 0) {
         throw new Error('Parts debe ser un array no vacio');
       }
 
-      const model = this.getModel(config);
+      const model = this.getModel(config, apiKey);
       const result = await model.generateContent(parts);
       const response = await result.response;
       const text = response.text();
@@ -134,14 +180,18 @@ class GeminiClientService {
 
   /**
    * Genera contenido multimodal con streaming
+   * @param {Array} parts - Array de partes del contenido
+   * @param {Object} config - Configuracion del modelo
+   * @param {string} apiKey - API key a usar (opcional)
+   * @returns {Promise<Object>} - Stream de respuesta
    */
-  async generateMultimodalContentStream(parts, config = {}) {
+  async generateMultimodalContentStream(parts, config = {}, apiKey = null) {
     try {
       if (!Array.isArray(parts) || parts.length === 0) {
         throw new Error('Parts debe ser un array no vacio');
       }
 
-      const model = this.getModel(config);
+      const model = this.getModel(config, apiKey);
       const result = await model.generateContentStream(parts);
 
       return result;
@@ -152,10 +202,14 @@ class GeminiClientService {
 
   /**
    * Inicia un chat
+   * @param {Array} history - Historial de mensajes
+   * @param {Object} config - Configuracion del modelo
+   * @param {string} apiKey - API key a usar (opcional)
+   * @returns {Object} - Instancia de chat
    */
-  startChat(history = [], config = {}) {
+  startChat(history = [], config = {}, apiKey = null) {
     try {
-      const model = this.getModel(config);
+      const model = this.getModel(config, apiKey);
       
       const chat = model.startChat({
         history: history,
@@ -173,6 +227,9 @@ class GeminiClientService {
 
   /**
    * Envia un mensaje en un chat existente
+   * @param {Object} chat - Instancia de chat
+   * @param {string} message - Mensaje a enviar
+   * @returns {Promise<Object>} - Respuesta del chat
    */
   async sendChatMessage(chat, message) {
     try {
@@ -195,10 +252,15 @@ class GeminiClientService {
 
   /**
    * Genera contenido con historial (para conversaciones)
+   * @param {string} prompt - Texto del prompt
+   * @param {Array} history - Historial de mensajes
+   * @param {Object} config - Configuracion del modelo
+   * @param {string} apiKey - API key a usar (opcional)
+   * @returns {Promise<Object>} - Stream de respuesta
    */
-  async generateContentStreamWithHistory(prompt, history, config = {}) {
+  async generateContentStreamWithHistory(prompt, history, config = {}, apiKey = null) {
     try {
-      const chat = this.startChat(history, config);
+      const chat = this.startChat(history, config, apiKey);
       const result = await chat.sendMessageStream(prompt);
       
       return result;
@@ -209,15 +271,18 @@ class GeminiClientService {
 
   /**
    * Cuenta tokens de un prompt (con fallback a estimacion)
+   * @param {string|Array} content - Contenido a contar
+   * @param {string} apiKey - API key a usar (opcional)
+   * @returns {Promise<number>} - Numero de tokens
    */
-  async countTokens(content) {
+  async countTokens(content, apiKey = null) {
     try {
       if (!content) {
         return 0;
       }
 
       try {
-        const model = this.getModel();
+        const model = this.getModel({}, apiKey);
         const result = await model.countTokens(content);
         return result.totalTokens;
       } catch (apiError) {
@@ -232,6 +297,8 @@ class GeminiClientService {
 
   /**
    * Estima tokens basado en caracteres
+   * @param {string|Array} content - Contenido a estimar
+   * @returns {number} - Numero estimado de tokens
    */
   estimateTokens(content) {
     try {
@@ -262,6 +329,9 @@ class GeminiClientService {
 
   /**
    * Convierte archivo a formato Gemini
+   * @param {Buffer} fileBuffer - Buffer del archivo
+   * @param {string} mimeType - Tipo MIME del archivo
+   * @returns {Object} - Parte generativa
    */
   fileToGenerativePart(fileBuffer, mimeType) {
     try {
@@ -282,6 +352,8 @@ class GeminiClientService {
 
   /**
    * Valida la configuracion del modelo
+   * @param {Object} config - Configuracion a validar
+   * @returns {boolean} - true si es valida
    */
   validateConfig(config) {
     try {
@@ -317,13 +389,44 @@ class GeminiClientService {
 
   /**
    * Obtiene informacion del modelo actual
+   * @returns {Object} - Informacion del modelo
    */
   getModelInfo() {
     return {
       model: this.model,
-      apiKeyConfigured: !!this.apiKey,
-      modelInitialized: !!this.generativeModel
+      defaultApiKeyConfigured: !!this.defaultApiKey,
+      cachedClients: this.clientCache.size
     };
+  }
+
+  /**
+   * Limpia el cache de clientes
+   */
+  clearClientCache() {
+    this.clientCache.clear();
+  }
+
+  /**
+   * Obtiene la API key apropiada para un usuario
+   * @param {Object} user - Usuario de Mongoose
+   * @returns {string|null} - API key a usar
+   */
+  getApiKeyForUser(user) {
+    if (!user) {
+      return this.defaultApiKey;
+    }
+
+    // Si el usuario tiene metodo getGeminiApiKey, usarlo
+    if (typeof user.getGeminiApiKey === 'function') {
+      return user.getGeminiApiKey();
+    }
+
+    // Si el usuario tiene preferencias y API key personal
+    if (user.preferences?.usePersonalApiKey && user.geminiApiKey) {
+      return user.decryptApiKey ? user.decryptApiKey(user.geminiApiKey) : null;
+    }
+
+    return this.defaultApiKey;
   }
 }
 
