@@ -65,61 +65,92 @@ class AuthService {
   }
 
   async login(credentials, ipAddress, userAgent) {
-    try {
-      const { email, password } = credentials;
+    const { email, password } = credentials;
 
-      if (!email || !password) {
-        throw new Error('Email y password son requeridos');
-      }
+    console.log('DEBUG 1 - Iniciando login para:', email);
+    console.log('DEBUG 1.5 - Password recibido length:', password?.length);
 
-      const user = await User.findOne({ email }).select('+password');
-
-      if (!user) {
-        throw new Error('Credenciales invalidas');
-      }
-
-      const isPasswordValid = await passwordService.comparePassword(
-        password,
-        user.password
-      );
-
-      if (!isPasswordValid) {
-        throw new Error('Credenciales invalidas');
-      }
-
-      if (!user.isVerified) {
-        throw new Error('Por favor verifica tu correo electronico antes de iniciar sesion. Revisa tu bandeja de entrada.');
-      }
-
-      if (!user.isActive) {
-        throw new Error('Tu cuenta ha sido desactivada. Contacta a servicios escolares.');
-      }
-
-      const token = tokenService.generateToken({
-        id: user._id,
-        email: user.email,
-        role: user.role
-      });
-
-      await sessionService.createSession({
-        userId: user._id,
-        token,
-        ipAddress,
-        userAgent
-      });
-
-      await user.updateLastLogin();
-
-      const userResponse = user.toObject();
-      delete userResponse.password;
-
-      return {
-        user: userResponse,
-        token
-      };
-    } catch (error) {
-      throw new Error(`Error en login: ${error.message}`);
+    if (!email || !password) {
+      throw new Error('Email y password son requeridos');
     }
+
+    const user = await User.findOne({ email }).select('+password');
+
+    console.log('DEBUG 2 - Usuario encontrado:', user ? 'SI' : 'NO');
+    
+    if (!user) {
+      console.log('DEBUG 3 - Usuario NO existe en la BD');
+      throw new Error('Credenciales invalidas');
+    }
+
+    console.log('DEBUG 4 - Datos del usuario:', {
+      email: user.email,
+      hasPassword: !!user.password,
+      passwordLength: user.password?.length,
+      isVerified: user.isVerified,
+      isActive: user.isActive
+    });
+
+    console.log('DEBUG 5 - Verificando password...');
+
+    const isPasswordValid = await passwordService.comparePassword(
+      password,
+      user.password
+    );
+
+    console.log('DEBUG 6 - Password valido:', isPasswordValid);
+
+    if (!isPasswordValid) {
+      console.log('DEBUG 7 - Password INCORRECTO');
+      throw new Error('Credenciales invalidas');
+    }
+
+    console.log('DEBUG 8 - Usuario encontrado y password correcto:', {
+      email: user.email,
+      isVerified: user.isVerified,
+      isActive: user.isActive
+    });
+
+    if (!user.isVerified) {
+      console.log('DEBUG 9 - Cuenta NO verificada, lanzando error con code');
+      const error = new Error('Por favor verifica tu correo electronico antes de iniciar sesion. Revisa tu bandeja de entrada.');
+      error.code = 'ACCOUNT_NOT_VERIFIED';
+      error.email = email;
+      console.log('DEBUG 10 - Error creado:', { message: error.message, code: error.code });
+      throw error;
+    }
+
+    if (!user.isActive) {
+      console.log('DEBUG 11 - Cuenta NO activa, lanzando error con code');
+      const error = new Error('Tu cuenta ha sido desactivada. Contacta a servicios escolares.');
+      error.code = 'ACCOUNT_DISABLED';
+      throw error;
+    }
+
+    console.log('DEBUG 12 - Todo OK, generando token...');
+
+    const token = tokenService.generateToken({
+      id: user._id,
+      email: user.email,
+      role: user.role
+    });
+
+    await sessionService.createSession({
+      userId: user._id,
+      token,
+      ipAddress,
+      userAgent
+    });
+
+    await user.updateLastLogin();
+
+    const userResponse = user.toObject();
+    delete userResponse.password;
+
+    return {
+      user: userResponse,
+      token
+    };
   }
 
   async logout(token) {

@@ -17,7 +17,7 @@ const login = async (req, res, next) => {
     const { email, password } = req.body;
 
     console.log('Email recibido:', email);
-    console.log('Password recibido:', password ? '***' : 'vacío');
+    console.log('Password recibido:', password ? '***' : 'vacio');
 
     const result = await authService.login(
       { email, password },
@@ -74,17 +74,42 @@ const login = async (req, res, next) => {
   } catch (error) {
     console.error('Error en login:', error);
     
+    if (error.code === 'ACCOUNT_NOT_VERIFIED') {
+      return res.status(403).json({
+        success: false,
+        message: error.message,
+        code: 'ACCOUNT_NOT_VERIFIED',
+        data: {
+          email: error.email,
+          needsVerification: true
+        }
+      });
+    }
+
+    if (error.code === 'ACCOUNT_DISABLED') {
+      return res.status(403).json({
+        success: false,
+        message: error.message,
+        code: 'ACCOUNT_DISABLED',
+        data: {
+          needsSupport: true
+        }
+      });
+    }
+    
     if (error.message.includes('Credenciales invalidas')) {
       return res.status(401).json({
         success: false,
-        message: 'Credenciales invalidas'
+        message: 'Credenciales invalidas',
+        code: 'INVALID_CREDENTIALS'
       });
     }
     
     if (error.message.includes('Error en login')) {
       return res.status(400).json({
         success: false,
-        message: error.message.replace('Error en login: ', '')
+        message: error.message.replace('Error en login: ', ''),
+        code: 'LOGIN_ERROR'
       });
     }
     
