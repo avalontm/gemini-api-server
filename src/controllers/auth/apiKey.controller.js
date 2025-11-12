@@ -71,13 +71,28 @@ const setApiKey = async (req, res, next) => {
 
     const trimmedApiKey = apiKey.trim();
 
-    // Validar la API key con Gemini
-    const validation = await geminiApiKeyService.validateApiKey(trimmedApiKey);
-
-    if (!validation.isValid) {
+    // Validación offline del formato
+    if (!geminiApiKeyService.isValidApiKeyFormat(trimmedApiKey)) {
       return res.status(400).json({
         success: false,
-        message: 'API key invalida',
+        message: 'Formato de API key inválido. Las API keys de Gemini deben comenzar con "AIzaSy"',
+        error: 'INVALID_FORMAT'
+      });
+    }
+
+    // Intentar validar la API key con Gemini
+    const validation = await geminiApiKeyService.validateApiKey(trimmedApiKey);
+    let isOfflineValidation = false;
+
+    // Si hay error de cuota, aceptar la API key con validación offline
+    if (!validation.isValid && validation.isQuotaError) {
+      console.log('⚠️ Error de cuota detectado, guardando API key con validación offline');
+      isOfflineValidation = true;
+    } else if (!validation.isValid) {
+      // Si no es error de cuota, la API key realmente es inválida
+      return res.status(400).json({
+        success: false,
+        message: 'API key inválida',
         error: validation.error,
         details: validation.details
       });
@@ -104,7 +119,8 @@ const setApiKey = async (req, res, next) => {
           geminiApiKey: encryptedKey,
           'geminiApiKeyStatus.isActive': true,
           'geminiApiKeyStatus.lastValidated': new Date(),
-          'geminiApiKeyStatus.lastError': null,
+          'geminiApiKeyStatus.lastError': isOfflineValidation ? 
+            'Validada offline - cuota excedida al momento de guardar' : null,
           'preferences.usePersonalApiKey': true
         }
       }
@@ -114,12 +130,17 @@ const setApiKey = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      message: 'API key configurada exitosamente',
+      message: isOfflineValidation 
+        ? 'API key configurada exitosamente (validación offline - la cuota de Gemini está excedida, pero la API key se guardó correctamente)'
+        : 'API key configurada exitosamente',
       data: {
         apiKeyInfo: apiKeyInfo,
         isActive: true,
         isUsingPersonalKey: true,
-        lastValidated: new Date()
+        lastValidated: new Date(),
+        validationType: isOfflineValidation ? 'offline' : 'online',
+        warning: isOfflineValidation ? 
+          'La API key se validó offline debido a límite de cuota. Será validada completamente en el próximo uso.' : null
       }
     });
   } catch (error) {
@@ -158,17 +179,44 @@ const validateApiKey = async (req, res, next) => {
       });
     }
 
+    // Validar formato offline primero
+    if (!geminiApiKeyService.isValidApiKeyFormat(decryptedKey)) {
+      await User.updateOne(
+        { _id: userId },
+        {
+          $set: {
+            'geminiApiKeyStatus.isActive': false,
+            'geminiApiKeyStatus.lastValidated': new Date(),
+            'geminiApiKeyStatus.lastError': 'Formato de API key inválido'
+          }
+        }
+      );
+
+      return res.status(400).json({
+        success: false,
+        message: 'Formato de API key inválido'
+      });
+    }
+
     // Validar la API key con Gemini
     const validation = await geminiApiKeyService.validateApiKey(decryptedKey);
+    let isOfflineValidation = false;
+
+    // Si hay error de cuota, mantener como válida pero advertir
+    if (!validation.isValid && validation.isQuotaError) {
+      isOfflineValidation = true;
+    }
 
     // Actualizar estado de la API key usando updateOne
     await User.updateOne(
       { _id: userId },
       {
         $set: {
-          'geminiApiKeyStatus.isActive': validation.isValid,
+          'geminiApiKeyStatus.isActive': validation.isValid || isOfflineValidation,
           'geminiApiKeyStatus.lastValidated': new Date(),
-          'geminiApiKeyStatus.lastError': validation.isValid ? null : validation.error
+          'geminiApiKeyStatus.lastError': (validation.isValid || isOfflineValidation) ? 
+            (isOfflineValidation ? 'Validación offline - cuota excedida' : null) : 
+            validation.error
         }
       }
     );
@@ -176,10 +224,14 @@ const validateApiKey = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: {
-        isValid: validation.isValid,
-        message: validation.message || validation.error,
+        isValid: validation.isValid || isOfflineValidation,
+        message: isOfflineValidation ? 
+          'No se pudo validar online (cuota excedida), pero el formato es correcto' : 
+          (validation.message || validation.error),
         lastValidated: new Date(),
-        model: validation.model
+        model: validation.model,
+        validationType: isOfflineValidation ? 'offline' : 'online',
+        warning: isOfflineValidation ? 'Validación offline debido a límite de cuota' : null
       }
     });
   } catch (error) {

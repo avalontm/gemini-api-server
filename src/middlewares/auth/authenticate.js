@@ -49,7 +49,7 @@ const authenticate = async (req, res, next) => {
     }
     
     // Buscar el usuario en la base de datos
-    const user = await User.findById(decoded.id).select('-password');
+    const user = await User.findById(decoded.id).select('-password +geminiApiKey');
     
     if (!user) {
       return unauthorizedResponse(
@@ -101,7 +101,7 @@ const optionalAuthenticate = async (req, res, next) => {
     // Intentar verificar el token
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      const user = await User.findById(decoded.id).select('-password');
+      const user = await User.findById(decoded.id).select('-password +geminiApiKey');
       
       if (user) {
         req.user = user;

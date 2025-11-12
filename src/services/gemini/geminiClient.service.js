@@ -53,37 +53,35 @@ class GeminiClientService {
     return client;
   }
 
-  /**
-   * Obtiene la API key apropiada para un usuario
-   * @param {Object} user - Usuario de Mongoose
-   * @returns {string|null} - API key a usar
-   */
-  getApiKeyForUser(user) {
-    if (!user) {
-      return this.defaultApiKey;
-    }
-
-    // Si el usuario tiene metodo getGeminiApiKey, usarlo
-    if (typeof user.getGeminiApiKey === 'function') {
-      const personalKey = user.getGeminiApiKey();
-      if (personalKey) {
-        logger.info('Usando API key personal del usuario', { userId: user._id || user.id });
-        return personalKey;
-      }
-    }
-
-    // Si el usuario tiene preferencias y API key personal
-    if (user.preferences?.usePersonalApiKey && user.geminiApiKey) {
-      const decryptedKey = user.decryptApiKey ? user.decryptApiKey(user.geminiApiKey) : user.geminiApiKey;
-      if (decryptedKey) {
-        logger.info('Usando API key personal del usuario (preferences)', { userId: user._id || user.id });
-        return decryptedKey;
-      }
-    }
-
-    logger.info('Usando API key del servidor', { userId: user._id || user.id });
+/**
+ * Obtiene la API key apropiada para un usuario
+ * @param {Object} user - Usuario de Mongoose
+ * @returns {string|null} - API key a usar
+ */
+getApiKeyForUser(user) {
+  if (!user) {
+    logger.info('Sin usuario, usando API key del servidor');
     return this.defaultApiKey;
   }
+
+  if (typeof user.getGeminiApiKey === 'function') {
+    const apiKey = user.getGeminiApiKey();
+    
+    // LOG TEMPORAL PARA DEBUGGING
+    const isServerKey = apiKey === this.defaultApiKey;
+    const maskedKey = apiKey ? `${apiKey.substring(0, 8)}...${apiKey.substring(apiKey.length - 4)}` : 'null';
+    
+    logger.info(`API Key seleccionada: ${maskedKey} (${isServerKey ? 'SERVIDOR' : 'PERSONAL'})`, {
+      userId: user._id || user.id,
+      usePersonalApiKey: user.preferences?.usePersonalApiKey
+    });
+    
+    return apiKey;
+  }
+
+  logger.info('Usando API key del servidor (fallback)');
+  return this.defaultApiKey;
+}
 
   /**
    * Inicializa el modelo generativo con contexto academico

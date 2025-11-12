@@ -14,14 +14,16 @@ class GeminiApiKeyService {
         return {
           isValid: false,
           error: 'API key no proporcionada o invalida',
+          isQuotaError: false
         };
       }
 
-      // Validar formato basico de la API key
-      if (!apiKey.startsWith('AIza') || apiKey.length < 30) {
+      // Validar formato basico de la API key (Gemini usa AIzaSy)
+      if (!apiKey.startsWith('AIzaSy') || apiKey.length < 35) {
         return {
           isValid: false,
-          error: 'Formato de API key invalido',
+          error: 'Formato de API key invalido. Las API keys de Gemini deben comenzar con "AIzaSy"',
+          isQuotaError: false
         };
       }
 
@@ -45,6 +47,7 @@ class GeminiApiKeyService {
         return {
           isValid: false,
           error: 'No se pudo verificar la API key',
+          isQuotaError: false
         };
       }
 
@@ -52,21 +55,27 @@ class GeminiApiKeyService {
         isValid: true,
         message: 'API key validada correctamente',
         model: process.env.GEMINI_MODEL || 'gemini-2.0-flash-exp',
+        isQuotaError: false
       };
 
     } catch (error) {
       console.error('Error validando API key:', error.message);
 
+      // Detectar si es un error de cuota (429)
+      const isQuotaError = error.message.includes('429') || 
+                          error.message.includes('quota') || 
+                          error.message.includes('Too Many Requests') ||
+                          error.message.includes('Quota exceeded');
+
       // Analizar el tipo de error
       let errorMessage = 'Error al validar la API key';
 
-      if (error.message.includes('API_KEY_INVALID') || 
-          error.message.includes('invalid') || 
-          error.message.includes('400')) {
-        errorMessage = 'API key invalida o revocada';
-      } else if (error.message.includes('quota') || 
-                 error.message.includes('429')) {
+      if (isQuotaError) {
         errorMessage = 'Limite de cuota excedido en esta API key';
+      } else if (error.message.includes('API_KEY_INVALID') || 
+                 error.message.includes('invalid') || 
+                 error.message.includes('400')) {
+        errorMessage = 'API key invalida o revocada';
       } else if (error.message.includes('permission') || 
                  error.message.includes('403')) {
         errorMessage = 'API key sin permisos suficientes';
@@ -79,8 +88,23 @@ class GeminiApiKeyService {
         isValid: false,
         error: errorMessage,
         details: error.message,
+        isQuotaError: isQuotaError
       };
     }
+  }
+
+  /**
+   * Validación offline del formato de API key
+   * @param {string} apiKey - API key a validar
+   * @returns {boolean} - true si el formato es válido
+   */
+  isValidApiKeyFormat(apiKey) {
+    if (!apiKey || typeof apiKey !== 'string') {
+      return false;
+    }
+    
+    // Las API keys de Gemini siempre comienzan con "AIzaSy" y tienen longitud apropiada
+    return apiKey.startsWith('AIzaSy') && apiKey.length >= 35;
   }
 
   /**
@@ -105,8 +129,8 @@ class GeminiApiKeyService {
     return {
       masked,
       length: apiKey.length,
-      startsWithAIza: apiKey.startsWith('AIza'),
-      isValid: apiKey.startsWith('AIza') && apiKey.length >= 30,
+      startsWithAIzaSy: apiKey.startsWith('AIzaSy'),
+      isValid: this.isValidApiKeyFormat(apiKey),
     };
   }
 

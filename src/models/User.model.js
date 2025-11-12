@@ -255,13 +255,33 @@ userSchema.methods.decryptApiKey = function (encryptedApiKey) {
 };
 
 userSchema.methods.getGeminiApiKey = function () {
+  console.log('=== DEBUG getGeminiApiKey ===');
+  console.log('usePersonalApiKey:', this.preferences.usePersonalApiKey);
+  console.log('has geminiApiKey:', !!this.geminiApiKey);
+  console.log('isActive:', this.geminiApiKeyStatus.isActive);
+  
+  // Verificar explícitamente si NO debe usar la personal
+  if (this.preferences.usePersonalApiKey === false) {
+    console.log('Usuario NO quiere usar API key personal');
+    return process.env.GEMINI_API_KEY;
+  }
+  
+  // Si quiere usar su API key personal, verificar que exista y esté activa
   if (this.preferences.usePersonalApiKey && this.geminiApiKey) {
     const decryptedKey = this.decryptApiKey(this.geminiApiKey);
+    console.log('API key desencriptada:', decryptedKey ? 'SI' : 'NO');
+    console.log('Primeros 10 chars:', decryptedKey ? decryptedKey.substring(0, 10) : 'null');
+    
     if (decryptedKey && this.geminiApiKeyStatus.isActive) {
+      console.log('Retornando API key PERSONAL');
       return decryptedKey;
+    } else {
+      console.log('Desencriptación falló o no está activa');
     }
   }
   
+  // Por defecto, usar la API key del servidor
+  console.log('Retornando API key del SERVIDOR (fallback)');
   return process.env.GEMINI_API_KEY;
 };
 
