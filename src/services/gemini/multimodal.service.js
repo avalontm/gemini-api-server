@@ -5,6 +5,10 @@ const conversationService = require('../database/conversation.service');
 const messageService = require('../database/message.service');
 const fs = require('fs').promises;
 const logger = require('../../utils/logger');
+const { 
+  enhancePrompt,   
+  isAcademicFileType 
+} = require('../../config/academicContext.config');
 
 class MultimodalService {
   /**
@@ -82,10 +86,23 @@ class MultimodalService {
         }
       }
 
-      // Agregar prompt al final (despues de los archivos)
-      if (prompt) {
-        parts.push({ text: prompt });
-      }
+      // ==========================================
+      // CRÍTICO: Mejorar el prompt con recordatorios
+      // ==========================================
+      const enhancedPrompt = enhancePrompt(prompt || 'Analiza el contenido adjunto', {
+        hasFiles: true,
+        fileCount: files ? files.length : 0,
+        forceComparison: files && files.length > 1
+      });
+
+      logger.info('Prompt mejorado con recordatorios contextuales', {
+        originalLength: prompt ? prompt.length : 0,
+        enhancedLength: enhancedPrompt.length,
+        filesAttached: files ? files.length : 0
+      });
+
+      // Agregar prompt mejorado al final (despues de los archivos)
+      parts.push({ text: enhancedPrompt });
 
       // Guardar mensaje del usuario con attachments
       const userMessage = await messageService.createMessage({
@@ -122,7 +139,9 @@ class MultimodalService {
 
       logger.info('Chat multimodal iniciado con historial', {
         conversationId: conversation._id,
-        historyLength: history.length
+        historyLength: history.length,
+        partsCount: parts.length,
+        hasImages: parts.some(p => p.inlineData)
       });
 
       // Enviar mensaje con partes multimodales
@@ -266,10 +285,23 @@ class MultimodalService {
         }
       }
 
-      // Agregar prompt
-      if (prompt) {
-        parts.push({ text: prompt });
-      }
+      // ==========================================
+      // CRÍTICO: Mejorar el prompt con recordatorios
+      // ==========================================
+      const enhancedPrompt = enhancePrompt(prompt || 'Analiza el contenido adjunto', {
+        hasFiles: true,
+        fileCount: files ? files.length : 0,
+        forceComparison: files && files.length > 1
+      });
+
+      logger.info('Prompt mejorado para streaming', {
+        originalLength: prompt ? prompt.length : 0,
+        enhancedLength: enhancedPrompt.length,
+        filesAttached: files ? files.length : 0
+      });
+
+      // Agregar prompt mejorado
+      parts.push({ text: enhancedPrompt });
 
       // Guardar mensaje del usuario
       const userMessage = await messageService.createMessage({
@@ -306,7 +338,9 @@ class MultimodalService {
 
       logger.info('Streaming multimodal iniciado con historial', {
         conversationId: conversation._id,
-        historyLength: history.length
+        historyLength: history.length,
+        partsCount: parts.length,
+        hasImages: parts.some(p => p.inlineData)
       });
 
       // Obtener stream

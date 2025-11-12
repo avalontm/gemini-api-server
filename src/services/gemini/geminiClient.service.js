@@ -4,7 +4,8 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { 
   ACADEMIC_SYSTEM_INSTRUCTIONS, 
   DEFAULT_ACADEMIC_CONFIG,
-  AREA_SPECIFIC_CONTEXTS 
+  AREA_SPECIFIC_CONTEXTS,
+  enhancePrompt  // ← AGREGAR ESTA IMPORTACIÓN
 } = require('../../config/academicContext.config');
 const conversationService = require('../database/conversation.service');
 const messageService = require('../database/message.service');
@@ -53,35 +54,35 @@ class GeminiClientService {
     return client;
   }
 
-/**
- * Obtiene la API key apropiada para un usuario
- * @param {Object} user - Usuario de Mongoose
- * @returns {string|null} - API key a usar
- */
-getApiKeyForUser(user) {
-  if (!user) {
-    logger.info('Sin usuario, usando API key del servidor');
+  /**
+   * Obtiene la API key apropiada para un usuario
+   * @param {Object} user - Usuario de Mongoose
+   * @returns {string|null} - API key a usar
+   */
+  getApiKeyForUser(user) {
+    if (!user) {
+      logger.info('Sin usuario, usando API key del servidor');
+      return this.defaultApiKey;
+    }
+
+    if (typeof user.getGeminiApiKey === 'function') {
+      const apiKey = user.getGeminiApiKey();
+      
+      // LOG TEMPORAL PARA DEBUGGING
+      const isServerKey = apiKey === this.defaultApiKey;
+      const maskedKey = apiKey ? `${apiKey.substring(0, 8)}...${apiKey.substring(apiKey.length - 4)}` : 'null';
+      
+      logger.info(`API Key seleccionada: ${maskedKey} (${isServerKey ? 'SERVIDOR' : 'PERSONAL'})`, {
+        userId: user._id || user.id,
+        usePersonalApiKey: user.preferences?.usePersonalApiKey
+      });
+      
+      return apiKey;
+    }
+
+    logger.info('Usando API key del servidor (fallback)');
     return this.defaultApiKey;
   }
-
-  if (typeof user.getGeminiApiKey === 'function') {
-    const apiKey = user.getGeminiApiKey();
-    
-    // LOG TEMPORAL PARA DEBUGGING
-    const isServerKey = apiKey === this.defaultApiKey;
-    const maskedKey = apiKey ? `${apiKey.substring(0, 8)}...${apiKey.substring(apiKey.length - 4)}` : 'null';
-    
-    logger.info(`API Key seleccionada: ${maskedKey} (${isServerKey ? 'SERVIDOR' : 'PERSONAL'})`, {
-      userId: user._id || user.id,
-      usePersonalApiKey: user.preferences?.usePersonalApiKey
-    });
-    
-    return apiKey;
-  }
-
-  logger.info('Usando API key del servidor (fallback)');
-  return this.defaultApiKey;
-}
 
   /**
    * Inicializa el modelo generativo con contexto academico
@@ -464,6 +465,371 @@ getApiKeyForUser(user) {
   }
 
   // ============================================
+  // MÉTODOS PARA MANEJO DE IMÁGENES
+  // ============================================
+
+  /**
+   * Limpia base64 removiendo el prefijo data URL
+   * @param {string} dataUrl - String base64 (puede incluir data:image/...)
+   * @returns {string} - Base64 limpio
+   */
+  cleanBase64(dataUrl) {
+    if (!dataUrl) return null;
+    
+    // Remover "data:image/png;base64," si existe
+    if (dataUrl.includes('base64,')) {
+      return dataUrl.split('base64,')[1];
+    }
+    
+    return dataUrl;
+  }
+
+  /**
+   * Detecta el MIME type desde un data URL o nombre de archivo
+   * @param {string} dataUrl - Data URL o base64
+   * @param {string} filename - Nombre del archivo (opcional)
+   * @returns {string} - MIME type detectado
+   */
+  getMimeType(dataUrl, filename = '') {
+    // Si es data URL, extraer mime type
+    if (dataUrl && dataUrl.startsWith('data:')) {
+      const match = dataUrl.match(/data:([^;]+);/);
+      if (match) return match[1];
+    }
+    
+    // Detectar por extensión de archivo
+    if (filename) {
+      const ext = filename.toLowerCase().split('.').pop();
+      const mimeTypes = {
+        'png': 'image/png',
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'webp': 'image/webp',
+        'gif': 'image/gif',
+        'pdf': 'application/pdf'
+      };
+      
+      if (mimeTypes[ext]) return mimeTypes[ext];
+    }
+    
+    // Default
+    return 'image/jpeg';
+  }
+
+  /**
+   * Construye las partes del mensaje con texto e imágenes
+   * @param {string} prompt - Texto del usuario
+   * @param {Array} images - Array de imágenes
+   * @returns {Array} - Array de parts para Gemini
+   */
+  buildMultimodalParts(prompt, images = []) {
+    const parts = [];
+    
+    // IMPORTANTE: Mejorar el prompt con recordatorios contextuales
+    const enhancedPrompt = enhancePrompt(prompt, {
+      hasFiles: images && images.length > 0,
+      fileCount: images ? images.length : 0,
+      forceComparison: images && images.length > 1
+    });
+    
+    // Agregar texto primero (mejorado)
+    if (enhancedPrompt && enhancedPrompt.trim()) {
+      parts.push({
+        text: enhancedPrompt
+      });
+    }
+    
+    // Agregar imágenes
+    if (images && images.length > 0) {
+      images.forEach((image, index) => {
+        try {
+          let imageData, mimeType;
+          
+          if (typeof image === 'string') {
+            // Es un string base64 (con o sin prefijo)
+            imageData = this.cleanBase64(image);
+            mimeType = this.getMimeType(image);
+          } else if (image.data && image.mimeType) {
+            // Objeto con { data, mimeType }
+            imageData = this.cleanBase64(image.data);
+            mimeType = image.mimeType;
+          } else if (image.buffer && image.mimetype) {
+            // Multer file object
+            imageData = image.buffer.toString('base64');
+            mimeType = image.mimetype;
+          } else if (Buffer.isBuffer(image)) {
+            // Es un buffer directo
+            imageData = image.toString('base64');
+            mimeType = 'image/jpeg'; // default
+          } else {
+            logger.warn(`Formato de imagen no reconocido en índice ${index}`, { image });
+            return; // Skip esta imagen
+          }
+          
+          if (!imageData) {
+            logger.warn(`Imagen vacía en índice ${index}`);
+            return;
+          }
+          
+          parts.push({
+            inlineData: {
+              mimeType: mimeType,
+              data: imageData
+            }
+          });
+          
+          logger.info(`Imagen agregada correctamente`, { 
+            index, 
+            mimeType,
+            dataLength: imageData.length,
+            preview: imageData.substring(0, 50) + '...'
+          });
+        } catch (error) {
+          logger.error(`Error procesando imagen ${index}:`, error);
+        }
+      });
+    }
+    
+    logger.info('Parts construidos para Gemini', { 
+      totalParts: parts.length,
+      textParts: parts.filter(p => p.text).length,
+      imageParts: parts.filter(p => p.inlineData).length
+    });
+    
+    return parts;
+  }
+
+  /**
+   * Genera respuesta con imágenes y historial
+   * @param {string} conversationId - ID de la conversación
+   * @param {string} prompt - Texto del prompt
+   * @param {Array} images - Array de imágenes (base64 o buffers)
+   * @param {string} userId - ID del usuario
+   * @param {Object} options - Opciones de configuración
+   * @returns {Promise<Object>} - Respuesta generada
+   */
+  async generateWithImagesAndHistory(conversationId, prompt, images, userId, options = {}) {
+    try {
+      logger.info('Generando respuesta con imágenes', {
+        conversationId,
+        imageCount: images ? images.length : 0,
+        promptLength: prompt ? prompt.length : 0
+      });
+
+      // Obtener API key del usuario
+      const user = options.user || null;
+      const apiKey = user ? this.getApiKeyForUser(user) : this.defaultApiKey;
+
+      // Inicializar modelo
+      const model = this.initializeModel(options, apiKey);
+      
+      // Obtener historial existente
+      const history = await this.buildConversationHistory(conversationId);
+      
+      // Iniciar chat con historial
+      const chat = model.startChat({
+        history: history,
+        generationConfig: options.config || DEFAULT_ACADEMIC_CONFIG
+      });
+
+      logger.info('Chat iniciado con historial', { 
+        conversationId, 
+        historyLength: history.length 
+      });
+
+      // Construir parts con texto e imágenes
+      const parts = this.buildMultimodalParts(prompt, images);
+      
+      if (parts.length === 0) {
+        throw new Error('No se pudieron construir las parts para el mensaje');
+      }
+
+      logger.info('Enviando mensaje multimodal a Gemini', {
+        partsCount: parts.length,
+        hasImages: parts.some(p => p.inlineData)
+      });
+
+      // Enviar mensaje con imágenes
+      const result = await chat.sendMessage(parts);
+      const response = result.response;
+      const text = response.text();
+
+      logger.info('Respuesta recibida de Gemini', {
+        responseLength: text.length,
+        finishReason: response.candidates?.[0]?.finishReason
+      });
+
+      // Guardar mensaje del usuario
+      const userTokens = await this.countTokens(prompt);
+      await messageService.createMessage({
+        conversationId,
+        role: 'user',
+        content: prompt,
+        type: images && images.length > 0 ? 'multimodal' : 'text',
+        tokens: userTokens,
+        metadata: {
+          hasImages: images && images.length > 0,
+          imageCount: images ? images.length : 0
+        }
+      });
+
+      // Guardar respuesta del asistente
+      const assistantTokens = response.usageMetadata?.candidatesTokenCount || 
+                              response.usageMetadata?.totalTokenCount || 
+                              await this.countTokens(text);
+      
+      const assistantMessage = await messageService.createMessage({
+        conversationId,
+        role: 'assistant',
+        content: text,
+        type: 'text',
+        tokens: assistantTokens
+      });
+
+      // Actualizar conversación
+      await conversationService.updateConversation(conversationId, userId, {
+        updatedAt: new Date(),
+        lastMessageAt: new Date()
+      });
+
+      return {
+        conversationId,
+        messageId: assistantMessage._id,
+        response: text,
+        tokens: {
+          prompt: response.usageMetadata?.promptTokenCount || 0,
+          completion: response.usageMetadata?.candidatesTokenCount || 0,
+          total: response.usageMetadata?.totalTokenCount || 0
+        },
+        metadata: {
+          historyLength: history.length,
+          totalMessages: history.length + 2,
+          usingPersonalApiKey: apiKey !== this.defaultApiKey,
+          processedImages: images ? images.length : 0
+        }
+      };
+    } catch (error) {
+      logger.error('Error generando con imágenes e historial:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Genera respuesta con imágenes, historial y streaming
+   * @param {string} conversationId - ID de la conversación
+   * @param {string} prompt - Texto del prompt
+   * @param {Array} images - Array de imágenes (base64 o buffers)
+   * @param {string} userId - ID del usuario
+   * @param {Object} options - Opciones de configuración
+   * @returns {Promise<Object>} - Respuesta generada con streaming
+   */
+  async streamWithImagesAndHistory(conversationId, prompt, images, userId, options = {}) {
+    try {
+      logger.info('Streaming con imágenes', {
+        conversationId,
+        imageCount: images ? images.length : 0
+      });
+
+      // Obtener API key del usuario
+      const user = options.user || null;
+      const apiKey = user ? this.getApiKeyForUser(user) : this.defaultApiKey;
+
+      const model = this.initializeModel(options, apiKey);
+      const history = await this.buildConversationHistory(conversationId);
+      
+      const chat = model.startChat({
+        history: history,
+        generationConfig: options.config || DEFAULT_ACADEMIC_CONFIG
+      });
+
+      // Construir parts
+      const parts = this.buildMultimodalParts(prompt, images);
+      
+      if (parts.length === 0) {
+        throw new Error('No se pudieron construir las parts para el mensaje');
+      }
+
+      // Enviar con streaming
+      const result = await chat.sendMessageStream(parts);
+      
+      let fullText = '';
+      let chunks = 0;
+
+      // Guardar mensaje del usuario inmediatamente
+      const userTokens = await this.countTokens(prompt);
+      await messageService.createMessage({
+        conversationId,
+        role: 'user',
+        content: prompt,
+        type: images && images.length > 0 ? 'multimodal' : 'text',
+        tokens: userTokens,
+        metadata: {
+          hasImages: images && images.length > 0,
+          imageCount: images ? images.length : 0
+        }
+      });
+
+      // Procesar stream
+      for await (const chunk of result.stream) {
+        const chunkText = chunk.text();
+        fullText += chunkText;
+        chunks++;
+
+        // Callback para enviar chunk al cliente
+        if (options.onChunk) {
+          options.onChunk({
+            chunk: chunkText,
+            conversationId,
+            chunkNumber: chunks
+          });
+        }
+      }
+
+      // Obtener metadata final
+      const finalResponse = await result.response;
+
+      // Guardar respuesta completa
+      const assistantTokens = finalResponse.usageMetadata?.candidatesTokenCount || 
+                              finalResponse.usageMetadata?.totalTokenCount || 
+                              await this.countTokens(fullText);
+      
+      const assistantMessage = await messageService.createMessage({
+        conversationId,
+        role: 'assistant',
+        content: fullText,
+        type: 'text',
+        tokens: assistantTokens
+      });
+
+      await conversationService.updateConversation(conversationId, userId, {
+        updatedAt: new Date(),
+        lastMessageAt: new Date()
+      });
+
+      return {
+        conversationId,
+        messageId: assistantMessage._id,
+        response: fullText,
+        chunks,
+        tokens: {
+          prompt: finalResponse.usageMetadata?.promptTokenCount || 0,
+          completion: finalResponse.usageMetadata?.candidatesTokenCount || 0,
+          total: finalResponse.usageMetadata?.totalTokenCount || 0
+        },
+        metadata: {
+          historyLength: history.length,
+          totalMessages: history.length + 2,
+          usingPersonalApiKey: apiKey !== this.defaultApiKey,
+          processedImages: images ? images.length : 0
+        }
+      };
+    } catch (error) {
+      logger.error('Error en streaming con imágenes:', error);
+      throw error;
+    }
+  }
+
+  // ============================================
   // METODOS LEGADOS (Mantener compatibilidad)
   // ============================================
 
@@ -735,7 +1101,8 @@ getApiKeyForUser(user) {
       model: this.model,
       defaultApiKeyConfigured: !!this.defaultApiKey,
       cachedClients: this.clientCache.size,
-      academicModeEnabled: true
+      academicModeEnabled: true,
+      multimodalSupported: true
     };
   }
 
