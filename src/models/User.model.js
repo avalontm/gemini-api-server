@@ -118,6 +118,37 @@ const userSchema = new mongoose.Schema(
         type: Boolean,
         default: false,
       },
+      usePersonalModel: {
+      type: Boolean,
+      default: false
+    },
+   // src/models/User.model.js
+
+geminiModel: {
+  type: String,
+  enum: [
+    // Gemini 2.5 (Más recientes - Recomendados)
+    'gemini-2.5-pro',           // Pensamiento avanzado
+    'gemini-2.5-flash',         // Mejor precio-rendimiento
+    'gemini-2.5-flash-lite',    // Ultra rápido
+    
+    // Gemini 2.0 (Segunda generación)
+    'gemini-2.0-flash',         // Versátil y confiable
+    'gemini-2.0-flash-lite',    // Pequeño y rápido
+    
+    // Gemini 1.5 (Primera generación - Probados)
+    'gemini-1.5-pro',           // Análisis profundo
+    'gemini-1.5-flash',         // Excelente para imágenes
+    'gemini-1.5-flash-8b',      // Compacto
+    
+    // Aliases dinámicos (Latest)
+    'gemini-flash-latest',      // Última versión de Flash
+    'gemini-pro-latest',        // Última versión de Pro
+    
+    null // null = usar el del servidor
+  ],
+  default: null
+}
     },
     
     isActive: {
@@ -283,6 +314,40 @@ userSchema.methods.getGeminiApiKey = function () {
   // Por defecto, usar la API key del servidor
   console.log('Retornando API key del SERVIDOR (fallback)');
   return process.env.GEMINI_API_KEY;
+};
+
+/**
+ * Obtiene el modelo de Gemini a usar para este usuario
+ * @returns {string|null} - Nombre del modelo o null para usar el del servidor
+ */
+userSchema.methods.getGeminiModel = function() {
+  // Si el usuario decidió usar modelo personal Y tiene uno configurado
+  if (this.preferences?.usePersonalModel && this.preferences?.geminiModel) {
+    return this.preferences.geminiModel;
+  }
+  
+  // Si no, retornar null para que use el del servidor
+  return null;
+};
+
+/**
+ * Verifica si el usuario está usando su propio modelo
+ * @returns {boolean}
+ */
+userSchema.methods.isUsingPersonalModel = function() {
+  return !!(this.preferences?.usePersonalModel && this.preferences?.geminiModel);
+};
+
+/**
+ * Actualiza la preferencia de modelo del usuario
+ * @param {string} model - Nombre del modelo
+ * @param {boolean} usePersonal - Si debe usar el modelo personal
+ */
+userSchema.methods.updateGeminiModel = async function(model, usePersonal = true) {
+  this.preferences = this.preferences || {};
+  this.preferences.geminiModel = model;
+  this.preferences.usePersonalModel = usePersonal;
+  return await this.save();
 };
 
 userSchema.methods.hasPersonalApiKey = function () {

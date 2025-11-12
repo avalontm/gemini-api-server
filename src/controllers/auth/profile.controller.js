@@ -228,14 +228,21 @@ const changePassword = async (req, res, next) => {
 
 /**
  * Actualizar preferencias del usuario
+ * EXTENDIDO: Ahora incluye configuración de modelo Gemini
  */
 const updatePreferences = async (req, res, next) => {
   try {
     const userId = req.user.id;
-    const { theme, language, notifications } = req.body;
+    const { 
+      theme, 
+      language, 
+      notifications,
+      usePersonalModel,    // ← NUEVO
+      geminiModel          // ← NUEVO
+    } = req.body;
 
     // Validar que al menos se proporcione una preferencia
-    if (!theme && !language && !notifications) {
+    if (!theme && !language && !notifications && usePersonalModel === undefined && !geminiModel) {
       return res.status(400).json({
         success: false,
         message: 'Debe proporcionar al menos una preferencia para actualizar'
@@ -252,7 +259,7 @@ const updatePreferences = async (req, res, next) => {
       });
     }
 
-    // Actualizar preferencias
+    // Actualizar preferencias existentes
     if (theme !== undefined) {
       const validThemes = ['light', 'dark', 'system'];
       if (!validThemes.includes(theme)) {
@@ -298,6 +305,35 @@ const updatePreferences = async (req, res, next) => {
       }
     }
 
+    // ============================================
+    // NUEVO: Actualizar configuración de modelo Gemini
+    // ============================================
+    if (usePersonalModel !== undefined) {
+      user.preferences.usePersonalModel = Boolean(usePersonalModel);
+    }
+
+    if (geminiModel !== undefined) {
+      const validModels = [
+        'gemini-2.0-flash-exp',
+        'gemini-1.5-flash',
+        'gemini-1.5-flash-latest',
+        'gemini-1.5-pro',
+        'gemini-1.5-pro-latest',
+        'gemini-2.5-flash'
+      ];
+
+      // Si se proporciona modelo, validar que sea válido
+      if (geminiModel !== null && !validModels.includes(geminiModel)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Modelo de Gemini invalido',
+          availableModels: validModels
+        });
+      }
+
+      user.preferences.geminiModel = geminiModel;
+    }
+
     await user.save();
 
     res.status(200).json({
@@ -305,6 +341,241 @@ const updatePreferences = async (req, res, next) => {
       message: 'Preferencias actualizadas exitosamente',
       data: {
         preferences: user.preferences
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Obtener modelos disponibles de Gemini
+ */
+const getAvailableModels = async (req, res, next) => {
+  try {
+    const models = [
+      // Gemini 2.5 - Más recientes
+      { 
+        value: 'gemini-2.5-pro', 
+        label: 'Gemini 2.5 Pro', 
+        badge: 'Pro',
+        description: 'Pensamiento avanzado para problemas complejos en código, matemáticas y STEM',
+        generation: '2.5',
+        features: {
+          speed: 'Moderado',
+          quality: 'Premium',
+          context: '1M tokens'
+        }
+      },
+      { 
+        value: 'gemini-2.5-flash', 
+        label: 'Gemini 2.5 Flash',
+        badge: 'Recomendado',
+        description: 'Mejor relación precio-rendimiento. Ideal para procesamiento a gran escala',
+        generation: '2.5',
+        features: {
+          speed: 'Rápido',
+          quality: 'Excelente',
+          context: '1M tokens'
+        }
+      },
+      { 
+        value: 'gemini-2.5-flash-lite', 
+        label: 'Gemini 2.5 Flash-Lite',
+        badge: 'Más rápido',
+        description: 'Ultra rápido y optimizado para alto rendimiento',
+        generation: '2.5',
+        features: {
+          speed: 'Ultra Rápido',
+          quality: 'Buena',
+          context: '1M tokens'
+        }
+      },
+      
+      // Gemini 2.0 - Segunda generación
+      { 
+        value: 'gemini-2.0-flash', 
+        label: 'Gemini 2.0 Flash',
+        description: 'Modelo de segunda generación más versátil y confiable',
+        generation: '2.0',
+        features: {
+          speed: 'Rápido',
+          quality: 'Muy Buena',
+          context: '1M tokens'
+        }
+      },
+      { 
+        value: 'gemini-2.0-flash-lite', 
+        label: 'Gemini 2.0 Flash-Lite',
+        description: 'Modelo de segunda generación pequeño y eficiente',
+        generation: '2.0',
+        features: {
+          speed: 'Muy Rápido',
+          quality: 'Buena',
+          context: '1M tokens'
+        }
+      },
+      
+      // Gemini 1.5 - Primera generación (Legacy)
+      { 
+        value: 'gemini-1.5-pro', 
+        label: 'Gemini 1.5 Pro',
+        badge: 'Legacy',
+        description: 'Mayor capacidad de razonamiento para análisis complejos',
+        generation: '1.5',
+        features: {
+          speed: 'Moderado',
+          quality: 'Premium',
+          context: '2M tokens'
+        }
+      },
+      { 
+        value: 'gemini-1.5-flash', 
+        label: 'Gemini 1.5 Flash',
+        badge: 'Popular',
+        description: 'Excelente para análisis de imágenes académicas. Muy flexible',
+        generation: '1.5',
+        features: {
+          speed: 'Rápido',
+          quality: 'Excelente',
+          context: '1M tokens'
+        }
+      },
+      { 
+        value: 'gemini-1.5-flash-8b', 
+        label: 'Gemini 1.5 Flash-8B',
+        description: 'Modelo compacto de 8B parámetros. Eficiente y económico',
+        generation: '1.5',
+        features: {
+          speed: 'Muy Rápido',
+          quality: 'Buena',
+          context: '1M tokens'
+        }
+      },
+      
+      // Latest aliases
+      { 
+        value: 'gemini-flash-latest', 
+        label: 'Gemini Flash (Latest)',
+        badge: 'Latest',
+        description: 'Apunta automáticamente a la última versión de Flash disponible',
+        generation: 'dynamic',
+        features: {
+          speed: 'Variable',
+          quality: 'Variable',
+          context: 'Variable'
+        }
+      },
+      { 
+        value: 'gemini-pro-latest', 
+        label: 'Gemini Pro (Latest)',
+        badge: 'Latest',
+        description: 'Apunta automáticamente a la última versión de Pro disponible',
+        generation: 'dynamic',
+        features: {
+          speed: 'Variable',
+          quality: 'Variable',
+          context: 'Variable'
+        }
+      }
+    ];
+
+    const userId = req.user.id;
+    const User = require('../../models/User.model');
+    const user = await User.findById(userId);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        models,
+        currentModel: user?.preferences?.geminiModel || null,
+        usingPersonalModel: user?.preferences?.usePersonalModel || false,
+        serverDefaultModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+        recommendations: {
+          imageAnalysis: ['gemini-2.5-flash', 'gemini-1.5-flash'],
+          complexReasoning: ['gemini-2.5-pro', 'gemini-1.5-pro'],
+          highSpeed: ['gemini-2.5-flash-lite', 'gemini-1.5-flash-8b'],
+          general: ['gemini-2.5-flash', 'gemini-2.0-flash']
+        }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Actualizar solo el modelo de Gemini (endpoint dedicado)
+ */
+const updateGeminiModel = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const { model, usePersonalModel } = req.body;
+
+    const User = require('../../models/User.model');
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuario no encontrado'
+      });
+    }
+
+    const validModels = [
+      // Gemini 2.5
+      'gemini-2.5-pro',
+      'gemini-2.5-flash',
+      'gemini-2.5-flash-lite',
+      // Gemini 2.0
+      'gemini-2.0-flash',
+      'gemini-2.0-flash-lite',
+      // Gemini 1.5
+      'gemini-1.5-pro',
+      'gemini-1.5-flash',
+      'gemini-1.5-flash-8b',
+      // Latest aliases
+      'gemini-flash-latest',
+      'gemini-pro-latest'
+    ];
+
+    // Si usePersonalModel es false, limpiar el modelo
+    if (usePersonalModel === false) {
+      user.preferences.usePersonalModel = false;
+      user.preferences.geminiModel = null;
+      await user.save();
+
+      return res.status(200).json({
+        success: true,
+        message: 'Configurado para usar modelo del servidor',
+        data: {
+          geminiModel: null,
+          usePersonalModel: false,
+          serverModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+        }
+      });
+    }
+
+    // Si se proporciona modelo, validar
+    if (model && !validModels.includes(model)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Modelo de Gemini invalido',
+        availableModels: validModels
+      });
+    }
+
+    // Actualizar modelo
+    user.preferences.usePersonalModel = true;
+    user.preferences.geminiModel = model;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: `Modelo cambiado a ${model}`,
+      data: {
+        geminiModel: model,
+        usePersonalModel: true
       }
     });
   } catch (error) {
@@ -384,6 +655,8 @@ module.exports = {
   updateProfile,
   changePassword,
   updatePreferences,
+  getAvailableModels, 
+  updateGeminiModel,   
   getUserStats,
   getUserByNumeroControl,
   getUsersByCarrera

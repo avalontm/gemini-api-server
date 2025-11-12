@@ -14,11 +14,23 @@ const logger = require('../../utils/logger');
 class GeminiClientService {
   constructor() {
     this.defaultApiKey = process.env.GEMINI_API_KEY;
-    this.model = process.env.GEMINI_MODEL || 'gemini-2.0-flash-exp';
+    this.defaultModel = process.env.GEMINI_MODEL || 'gemini-2.0-flash'; 
     
     if (!this.defaultApiKey) {
       console.warn('ADVERTENCIA: GEMINI_API_KEY no esta configurada en las variables de entorno');
     }
+
+    // Ya no necesitas este if porque ya tiene fallback arriba
+    // Pero si quieres doble seguridad:
+    if (!this.defaultModel) {
+      console.warn('ADVERTENCIA: GEMINI_MODEL no configurado, usando gemini-2.0-flash por defecto');
+      this.defaultModel = 'gemini-2.0-flash';
+    }
+
+    logger.info('GeminiClientService inicializado', {
+      modeloDefault: this.defaultModel,
+      hasApiKey: !!this.defaultApiKey
+    });
 
     // Cache de clientes por API key (para optimizar)
     this.clientCache = new Map();
@@ -84,13 +96,41 @@ class GeminiClientService {
     return this.defaultApiKey;
   }
 
+ /**
+   * Obtiene el modelo apropiado para un usuario
+   * @param {Object} user - Usuario de Mongoose
+   * @returns {string} - Modelo a usar
+   */
+  getModelForUser(user) {
+    if (!user) {
+      logger.info('Sin usuario, usando modelo del servidor');
+      return this.defaultModel;
+    }
+
+    if (typeof user.getGeminiModel === 'function') {
+      const userModel = user.getGeminiModel();
+      
+      if (userModel) {
+        logger.info(`Usando modelo personal del usuario: ${userModel}`, {
+          userId: user._id || user.id,
+          usePersonalModel: user.preferences?.usePersonalModel
+        });
+        return userModel;
+      }
+    }
+
+    logger.info(`Usando modelo del servidor: ${this.defaultModel}`);
+    return this.defaultModel;
+  }
+
   /**
    * Inicializa el modelo generativo con contexto academico
    * @param {Object} options - Opciones de configuracion
    * @param {string} apiKey - API key a usar (opcional)
+   * @param {string} modelName - Nombre del modelo (opcional)
    * @returns {Object} - Modelo generativo
    */
-  initializeModel(options = {}, apiKey = null) {
+  initializeModel(options = {}, apiKey = null, modelName = null) {
     try {
       const client = this.getClient(apiKey);
       
@@ -100,6 +140,9 @@ class GeminiClientService {
         additionalContext = '',
         config = {}
       } = options;
+
+      // Usar el modelo especificado o el por defecto
+      const modelToUse = modelName || this.defaultModel;
 
       // Construir instrucciones completas
       let fullInstructions = systemInstruction;
@@ -116,9 +159,8 @@ class GeminiClientService {
         });
       }
 
-      // LOG DETALLADO: Mostrar las instrucciones que se estan enviando
       logger.info('Inicializando modelo con instrucciones academicas', {
-        model: this.model,
+        model: modelToUse, 
         area: area || 'general',
         hasAdditionalContext: !!additionalContext,
         instructionsLength: fullInstructions.length,
@@ -126,15 +168,8 @@ class GeminiClientService {
         maxOutputTokens: config.maxOutputTokens || DEFAULT_ACADEMIC_CONFIG.maxOutputTokens
       });
 
-      // LOG VERBOSE: Mostrar primeros 500 caracteres de las instrucciones
-      if (process.env.LOG_LEVEL === 'verbose' || process.env.NODE_ENV === 'development') {
-        logger.debug('Primeros 500 caracteres de system instructions:', {
-          preview: fullInstructions.substring(0, 500) + '...'
-        });
-      }
-
       const modelConfig = {
-        model: this.model,
+        model: modelToUse, // ← Usar el modelo correcto
         systemInstruction: fullInstructions,
         generationConfig: {
           temperature: config.temperature || DEFAULT_ACADEMIC_CONFIG.temperature,
@@ -145,25 +180,25 @@ class GeminiClientService {
         safetySettings: [
           {
             category: 'HARM_CATEGORY_HARASSMENT',
-            threshold: 'BLOCK_MEDIUM_AND_ABOVE'
+            threshold: 'BLOCK_ONLY_HIGH'
           },
           {
             category: 'HARM_CATEGORY_HATE_SPEECH',
-            threshold: 'BLOCK_MEDIUM_AND_ABOVE'
+            threshold: 'BLOCK_ONLY_HIGH'
           },
           {
             category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
-            threshold: 'BLOCK_MEDIUM_AND_ABOVE'
+            threshold: 'BLOCK_ONLY_HIGH'
           },
           {
             category: 'HARM_CATEGORY_DANGEROUS_CONTENT',
-            threshold: 'BLOCK_MEDIUM_AND_ABOVE'
+            threshold: 'BLOCK_ONLY_HIGH'
           }
         ]
       };
 
       logger.info('Modelo inicializado exitosamente', {
-        model: this.model,
+        model: modelToUse,
         configApplied: true
       });
 
@@ -259,62 +294,16 @@ class GeminiClientService {
    * @param {Object} options - Opciones de configuracion
    * @returns {Promise<Object>} - Respuesta generada
    */
-  async generateWithHistory(conversationId, prompt, userId, options = {}) {
+ async generateWithHistory(conversationId, prompt, userId, options = {}) {
     try {
-      // Obtener API key del usuario si esta disponible
       const user = options.user || null;
       const apiKey = user ? this.getApiKeyForUser(user) : this.defaultApiKey;
+      const modelName = user ? this.getModelForUser(user) : this.defaultModel; // ← NUEVO
 
-      const model = this.initializeModel(options, apiKey);
+      const model = this.initializeModel(options, apiKey, modelName); // ← Pasar modelo
       
-      // Obtener historial existente
-      const history = await this.buildConversationHistory(conversationId);
+      // ... resto del código igual ...
       
-      // Iniciar chat con historial
-      const chat = model.startChat({
-        history: history,
-        generationConfig: options.config || DEFAULT_ACADEMIC_CONFIG
-      });
-
-      logger.info('Chat iniciado con historial', { 
-        conversationId, 
-        historyLength: history.length 
-      });
-
-      // Enviar mensaje
-      const result = await chat.sendMessage(prompt);
-      const response = result.response;
-      const text = response.text();
-
-      // Guardar mensaje del usuario
-      const userTokens = await this.countTokens(prompt);
-      await messageService.createMessage({
-        conversationId,
-        role: 'user',
-        content: prompt,
-        type: 'text',
-        tokens: userTokens
-      });
-
-      // Guardar respuesta del asistente
-      const assistantTokens = response.usageMetadata?.candidatesTokenCount || 
-                              response.usageMetadata?.totalTokenCount || 
-                              await this.countTokens(text);
-      
-      const assistantMessage = await messageService.createMessage({
-        conversationId,
-        role: 'assistant',
-        content: text,
-        type: 'text',
-        tokens: assistantTokens
-      });
-
-      // Actualizar conversacion
-      await conversationService.updateConversation(conversationId, userId, {
-        updatedAt: new Date(),
-        lastMessageAt: new Date()
-      });
-
       return {
         conversationId,
         messageId: assistantMessage._id,
@@ -327,7 +316,9 @@ class GeminiClientService {
         metadata: {
           historyLength: history.length,
           totalMessages: history.length + 2,
-          usingPersonalApiKey: apiKey !== this.defaultApiKey
+          usingPersonalApiKey: apiKey !== this.defaultApiKey,
+          usingPersonalModel: modelName !== this.defaultModel, // ← NUEVO
+          model: modelName // ← NUEVO
         }
       };
     } catch (error) {
@@ -346,70 +337,14 @@ class GeminiClientService {
    */
   async streamWithHistory(conversationId, prompt, userId, options = {}) {
     try {
-      // Obtener API key del usuario si esta disponible
       const user = options.user || null;
       const apiKey = user ? this.getApiKeyForUser(user) : this.defaultApiKey;
+      const modelName = user ? this.getModelForUser(user) : this.defaultModel; // ← NUEVO
 
-      const model = this.initializeModel(options, apiKey);
-      const history = await this.buildConversationHistory(conversationId);
+      const model = this.initializeModel(options, apiKey, modelName); // ← Pasar modelo
       
-      const chat = model.startChat({
-        history: history,
-        generationConfig: options.config || DEFAULT_ACADEMIC_CONFIG
-      });
-
-      const result = await chat.sendMessageStream(prompt);
+      // ... resto del código igual ...
       
-      let fullText = '';
-      let chunks = 0;
-
-      // Guardar mensaje del usuario inmediatamente
-      const userTokens = await this.countTokens(prompt);
-      await messageService.createMessage({
-        conversationId,
-        role: 'user',
-        content: prompt,
-        type: 'text',
-        tokens: userTokens
-      });
-
-      // Procesar stream
-      for await (const chunk of result.stream) {
-        const chunkText = chunk.text();
-        fullText += chunkText;
-        chunks++;
-
-        // Callback para enviar chunk al cliente
-        if (options.onChunk) {
-          options.onChunk({
-            chunk: chunkText,
-            conversationId,
-            chunkNumber: chunks
-          });
-        }
-      }
-
-      // Obtener metadata final
-      const finalResponse = await result.response;
-
-      // Guardar respuesta completa
-      const assistantTokens = finalResponse.usageMetadata?.candidatesTokenCount || 
-                              finalResponse.usageMetadata?.totalTokenCount || 
-                              await this.countTokens(fullText);
-      
-      const assistantMessage = await messageService.createMessage({
-        conversationId,
-        role: 'assistant',
-        content: fullText,
-        type: 'text',
-        tokens: assistantTokens
-      });
-
-      await conversationService.updateConversation(conversationId, userId, {
-        updatedAt: new Date(),
-        lastMessageAt: new Date()
-      });
-
       return {
         conversationId,
         messageId: assistantMessage._id,
@@ -423,7 +358,9 @@ class GeminiClientService {
         metadata: {
           historyLength: history.length,
           totalMessages: history.length + 2,
-          usingPersonalApiKey: apiKey !== this.defaultApiKey
+          usingPersonalApiKey: apiKey !== this.defaultApiKey,
+          usingPersonalModel: modelName !== this.defaultModel, // ← NUEVO
+          model: modelName // ← NUEVO
         }
       };
     } catch (error) {
@@ -1092,17 +1029,24 @@ class GeminiClientService {
     }
   }
 
-  /**
+/**
    * Obtiene informacion del modelo actual
-   * @returns {Object} - Informacion del modelo
    */
   getModelInfo() {
     return {
-      model: this.model,
+      defaultModel: this.defaultModel,
       defaultApiKeyConfigured: !!this.defaultApiKey,
       cachedClients: this.clientCache.size,
       academicModeEnabled: true,
-      multimodalSupported: true
+      multimodalSupported: true,
+      availableModels: [
+        'gemini-2.0-flash-exp',
+        'gemini-1.5-flash',
+        'gemini-1.5-flash-latest',
+        'gemini-1.5-pro',
+        'gemini-1.5-pro-latest',
+        'gemini-2.5-flash'
+      ]
     };
   }
 

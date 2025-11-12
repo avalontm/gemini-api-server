@@ -17,7 +17,9 @@ const {
   getUserByNumeroControl,
   getUsersByCarrera,
   updatePreferences,
-  getUserStats
+  getUserStats,
+  getAvailableModels,   
+  updateGeminiModel    
 } = require('../../controllers/auth/profile.controller');
 
 /**
@@ -384,6 +386,114 @@ router.get(
   '/carrera/:carrera',
   authenticate,
   asyncHandler(getUsersByCarrera)
+);
+
+/**
+ * @swagger
+ * /api/user/gemini/models:
+ *   get:
+ *     summary: Obtener modelos de Gemini disponibles
+ *     tags: [User]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Lista de modelos disponibles
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     models:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           value:
+ *                             type: string
+ *                           label:
+ *                             type: string
+ *                           badge:
+ *                             type: string
+ *                           description:
+ *                             type: string
+ *                     currentModel:
+ *                       type: string
+ *                       nullable: true
+ *                     usingPersonalModel:
+ *                       type: boolean
+ *                     serverDefaultModel:
+ *                       type: string
+ *       401:
+ *         description: No autorizado
+ */
+router.get(
+  '/gemini/models',
+  authenticate,
+  asyncHandler(getAvailableModels)
+);
+
+/**
+ * @swagger
+ * /api/user/gemini/model:
+ *   put:
+ *     summary: Actualizar modelo de Gemini del usuario
+ *     tags: [User]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               model:
+ *                 type: string
+ *                 enum: 
+ *                   - gemini-2.0-flash-exp
+ *                   - gemini-1.5-flash
+ *                   - gemini-1.5-flash-latest
+ *                   - gemini-1.5-pro
+ *                   - gemini-1.5-pro-latest
+ *                   - gemini-2.5-flash
+ *                 example: "gemini-1.5-flash"
+ *               usePersonalModel:
+ *                 type: boolean
+ *                 example: true
+ *     responses:
+ *       200:
+ *         description: Modelo actualizado exitosamente
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                 message:
+ *                   type: string
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     geminiModel:
+ *                       type: string
+ *                     usePersonalModel:
+ *                       type: boolean
+ *       400:
+ *         description: Modelo invalido
+ *       401:
+ *         description: No autorizado
+ */
+router.put(
+  '/gemini/model',
+  authenticate,
+  asyncHandler(updateGeminiModel)
 );
 
 module.exports = router;

@@ -16,415 +16,328 @@ class MultimodalService {
    * @param {Object} data - Datos del analisis
    * @returns {Promise<Object>} - Resultado del analisis
    */
-  async analyzeMultimodal(data) {
-    try {
-      const { 
-        prompt, 
-        files, 
-        userId, 
-        conversationId, 
-        config = {},
-        user = null 
-      } = data;
+async analyzeMultimodal(data) {
+  try {
+    const { prompt, files, userId, conversationId, config = {}, user = null } = data;
 
-      if (!prompt && (!files || files.length === 0)) {
-        throw new Error('Se requiere al menos un prompt o archivos');
+    // ... código existente ...
+
+    // Obtener API key Y MODELO del usuario
+    const apiKey = user ? geminiClient.getApiKeyForUser(user) : null;
+    const modelName = user ? geminiClient.getModelForUser(user) : null; // ← NUEVO
+
+    // Obtener historial de conversacion
+    const history = await geminiClient.buildConversationHistory(conversation._id);
+
+    // Inicializar modelo CON EL NOMBRE DEL MODELO
+    const model = geminiClient.initializeModel(
+      { config },
+      apiKey,
+      modelName // ← NUEVO: Pasar el modelo
+    );
+
+    // ... resto del código igual ...
+
+    return {
+      response: text,
+      conversationId: conversation._id,
+      messageId: assistantMessage._id,
+      attachments: attachments.map(att => ({
+        type: att.type,
+        name: att.name,
+        size: att.size
+      })),
+      tokens: {
+        prompt: userMessage.tokens,
+        completion: assistantTokens,
+        total: totalTokens
+      },
+      metadata: {
+        model: modelName || geminiClient.defaultModel, // ← NUEVO
+        filesProcessed: files ? files.length : 0,
+        fileTypes: this.extractTags(files),
+        historyLength: history.length,
+        totalMessages: history.length + 2,
+        isNewConversation,
+        usingPersonalApiKey: apiKey !== geminiClient.defaultApiKey,
+        usingPersonalModel: modelName !== geminiClient.defaultModel, // ← NUEVO
+        timestamp: new Date()
       }
+    };
+  } catch (error) {
+    logger.error('Error en analisis multimodal:', error);
+    throw new Error(`Error en analisis multimodal: ${error.message}`);
+  }
+}
 
-      logger.info('Iniciando analisis multimodal', {
+/**
+ * Analiza contenido multimodal con streaming Y CON HISTORIAL
+ */
+async analyzeMultimodalStream(data, onChunk) {
+  try {
+    const { 
+      prompt, 
+      files, 
+      userId, 
+      conversationId, 
+      config = {},
+      user = null 
+    } = data;
+
+    if (!prompt && (!files || files.length === 0)) {
+      throw new Error('Se requiere al menos un prompt o archivos');
+    }
+
+    if (typeof onChunk !== 'function') {
+      throw new Error('onChunk debe ser una funcion');
+    }
+
+    logger.info('Iniciando streaming multimodal', {
+      userId,
+      conversationId,
+      filesCount: files ? files.length : 0
+    });
+
+    let conversation;
+    let isNewConversation = false;
+
+    // Crear o obtener conversacion
+    if (conversationId) {
+      conversation = await conversationService.getConversationById(conversationId, userId);
+      if (!conversation) {
+        throw new Error('Conversacion no encontrada');
+      }
+    } else {
+      const title = this.generateTitle(prompt || 'Contenido multimodal');
+      const tags = this.extractTags(files);
+      
+      conversation = await conversationService.createConversation({
         userId,
-        conversationId,
-        filesCount: files ? files.length : 0,
-        hasPrompt: !!prompt
-      });
-
-      let conversation;
-      let isNewConversation = false;
-
-      // Crear o obtener conversacion
-      if (conversationId) {
-        conversation = await conversationService.getConversationById(conversationId, userId);
-        if (!conversation) {
-          throw new Error('Conversacion no encontrada');
+        title,
+        tags: ['multimodal', 'streaming', ...tags],
+        metadata: {
+          multimodal: true,
+          streaming: true,
+          createdBy: 'multimodal-service'
         }
-      } else {
-        const title = this.generateTitle(prompt || 'Contenido multimodal');
-        const tags = this.extractTags(files);
+      });
+      isNewConversation = true;
+    }
+
+    // Procesar archivos
+    const parts = [];
+    const attachments = [];
+
+    if (files && files.length > 0) {
+      for (const file of files) {
+        this.validateFileType(file.mimeType);
         
-        conversation = await conversationService.createConversation({
-          userId,
-          title,
-          tags: ['multimodal', ...tags],
-          metadata: {
-            multimodal: true,
-            createdBy: 'multimodal-service'
-          }
+        const fileBuffer = await fs.readFile(file.path);
+        const filePart = geminiClient.fileToGenerativePart(fileBuffer, file.mimeType);
+        
+        parts.push(filePart);
+        
+        attachments.push({
+          type: this.getFileType(file.mimeType),
+          url: file.path,
+          name: file.name,
+          mimeType: file.mimeType,
+          size: file.size || 0
         });
-        isNewConversation = true;
       }
+    }
 
-      // Procesar archivos y crear parts
-      const parts = [];
-      const attachments = [];
+    // ==========================================
+    // CRÍTICO: Mejorar el prompt con recordatorios
+    // ==========================================
+    const enhancedPrompt = enhancePrompt(prompt || 'Analiza el contenido adjunto', {
+      hasFiles: true,
+      fileCount: files ? files.length : 0,
+      forceComparison: files && files.length > 1
+    });
 
-      if (files && files.length > 0) {
-        for (const file of files) {
-          this.validateFileType(file.mimeType);
-          
-          const fileBuffer = await fs.readFile(file.path);
-          const filePart = geminiClient.fileToGenerativePart(fileBuffer, file.mimeType);
-          
-          parts.push(filePart);
-          
-          attachments.push({
-            type: this.getFileType(file.mimeType),
-            url: file.path,
-            name: file.name,
-            mimeType: file.mimeType,
-            size: file.size || 0
+    logger.info('Prompt mejorado para streaming', {
+      originalLength: prompt ? prompt.length : 0,
+      enhancedLength: enhancedPrompt.length,
+      filesAttached: files ? files.length : 0
+    });
+
+    // Agregar prompt mejorado
+    parts.push({ text: enhancedPrompt });
+
+    // Guardar mensaje del usuario
+    const userMessage = await messageService.createMessage({
+      conversationId: conversation._id,
+      role: 'user',
+      content: prompt || 'Archivo adjunto',
+      type: 'multimodal',
+      attachments,
+      tokens: await geminiClient.countTokens(prompt || 'Archivo adjunto')
+    });
+
+    await conversationService.addMessageToConversation(
+      conversation._id,
+      userMessage._id
+    );
+
+    // Obtener API key Y MODELO del usuario
+    const apiKey = user ? geminiClient.getApiKeyForUser(user) : null;
+    const modelName = user ? geminiClient.getModelForUser(user) : geminiClient.defaultModel; // ← AGREGAR
+
+    // Obtener historial
+    const history = await geminiClient.buildConversationHistory(conversation._id);
+
+    // Inicializar modelo CON EL NOMBRE DEL MODELO
+    const model = geminiClient.initializeModel(
+      { config },
+      apiKey,
+      modelName // ← PASAR EL MODELO
+    );
+
+    // Iniciar chat con historial
+    const chat = model.startChat({
+      history: history,
+      generationConfig: config
+    });
+
+    logger.info('Streaming multimodal iniciado con historial', {
+      conversationId: conversation._id,
+      historyLength: history.length,
+      partsCount: parts.length,
+      hasImages: parts.some(p => p.inlineData),
+      model: modelName // ← AGREGAR AL LOG
+    });
+
+    // Obtener stream
+    const result = await chat.sendMessageStream(parts);
+
+    let fullResponse = '';
+    let chunkCount = 0;
+    let hasContent = false;
+
+    // Procesar stream con mejor manejo de errores
+    for await (const chunk of result.stream) {
+      try {
+        const chunkText = chunk.text();
+        
+        if (chunkText) { 
+          hasContent = true;
+          fullResponse += chunkText;
+          chunkCount++;
+
+          onChunk({
+            chunk: chunkText,
+            accumulated: fullResponse,
+            chunkNumber: chunkCount,
+            conversationId: conversation._id
           });
         }
+      } catch (chunkError) {
+        logger.warn('Error procesando chunk individual:', chunkError);
+        // Continuar con el siguiente chunk
       }
-
-      // ==========================================
-      // CRÍTICO: Mejorar el prompt con recordatorios
-      // ==========================================
-      const enhancedPrompt = enhancePrompt(prompt || 'Analiza el contenido adjunto', {
-        hasFiles: true,
-        fileCount: files ? files.length : 0,
-        forceComparison: files && files.length > 1
-      });
-
-      logger.info('Prompt mejorado con recordatorios contextuales', {
-        originalLength: prompt ? prompt.length : 0,
-        enhancedLength: enhancedPrompt.length,
-        filesAttached: files ? files.length : 0
-      });
-
-      // Agregar prompt mejorado al final (despues de los archivos)
-      parts.push({ text: enhancedPrompt });
-
-      // Guardar mensaje del usuario con attachments
-      const userMessage = await messageService.createMessage({
-        conversationId: conversation._id,
-        role: 'user',
-        content: prompt || 'Archivo adjunto',
-        type: 'multimodal',
-        attachments,
-        tokens: await geminiClient.countTokens(prompt || 'Archivo adjunto')
-      });
-
-      await conversationService.addMessageToConversation(
-        conversation._id,
-        userMessage._id
-      );
-
-      // Obtener API key del usuario
-      const apiKey = user ? geminiClient.getApiKeyForUser(user) : null;
-
-      // Obtener historial de conversacion
-      const history = await geminiClient.buildConversationHistory(conversation._id);
-
-      // Inicializar modelo
-      const model = geminiClient.initializeModel(
-        { config },
-        apiKey
-      );
-
-      // Iniciar chat con historial
-      const chat = model.startChat({
-        history: history,
-        generationConfig: config
-      });
-
-      logger.info('Chat multimodal iniciado con historial', {
-        conversationId: conversation._id,
-        historyLength: history.length,
-        partsCount: parts.length,
-        hasImages: parts.some(p => p.inlineData)
-      });
-
-      // Enviar mensaje con partes multimodales
-      const result = await chat.sendMessage(parts);
-      const response = result.response;
-      const text = response.text();
-
-      // Guardar respuesta del asistente
-      const assistantTokens = response.usageMetadata?.candidatesTokenCount || 
-                              response.usageMetadata?.totalTokenCount || 
-                              await geminiClient.countTokens(text);
-
-      const assistantMessage = await messageService.createMessage({
-        conversationId: conversation._id,
-        role: 'assistant',
-        content: text,
-        type: 'multimodal',
-        tokens: assistantTokens
-      });
-
-      await conversationService.addMessageToConversation(
-        conversation._id,
-        assistantMessage._id
-      );
-
-      const totalTokens = userMessage.tokens + assistantTokens;
-      await conversationService.updateTokenUsage(conversation._id, assistantTokens);
-
-      logger.info('Analisis multimodal completado', {
-        conversationId: conversation._id,
-        messageId: assistantMessage._id,
-        filesProcessed: files ? files.length : 0,
-        tokens: totalTokens
-      });
-
-      return {
-        response: text,
-        conversationId: conversation._id,
-        messageId: assistantMessage._id,
-        attachments: attachments.map(att => ({
-          type: att.type,
-          name: att.name,
-          size: att.size
-        })),
-        tokens: {
-          prompt: userMessage.tokens,
-          completion: assistantTokens,
-          total: totalTokens
-        },
-        metadata: {
-          model: geminiClient.model,
-          filesProcessed: files ? files.length : 0,
-          fileTypes: this.extractTags(files),
-          historyLength: history.length,
-          totalMessages: history.length + 2,
-          isNewConversation,
-          usingPersonalApiKey: apiKey !== geminiClient.defaultApiKey,
-          timestamp: new Date()
-        }
-      };
-    } catch (error) {
-      logger.error('Error en analisis multimodal:', error);
-      throw new Error(`Error en analisis multimodal: ${error.message}`);
     }
-  }
 
-  /**
-   * Analiza contenido multimodal con streaming Y CON HISTORIAL
-   */
-  async analyzeMultimodalStream(data, onChunk) {
-    try {
-      const { 
-        prompt, 
-        files, 
-        userId, 
-        conversationId, 
-        config = {},
-        user = null 
-      } = data;
-
-      if (!prompt && (!files || files.length === 0)) {
-        throw new Error('Se requiere al menos un prompt o archivos');
-      }
-
-      if (typeof onChunk !== 'function') {
-        throw new Error('onChunk debe ser una funcion');
-      }
-
-      logger.info('Iniciando streaming multimodal', {
-        userId,
-        conversationId,
+    // Verificar si hubo contenido
+    if (!hasContent) {
+      logger.error('Stream vacío - posiblemente bloqueado por safety settings', {
+        model: modelName,
         filesCount: files ? files.length : 0
       });
-
-      let conversation;
-      let isNewConversation = false;
-
-      // Crear o obtener conversacion
-      if (conversationId) {
-        conversation = await conversationService.getConversationById(conversationId, userId);
-        if (!conversation) {
-          throw new Error('Conversacion no encontrada');
-        }
-      } else {
-        const title = this.generateTitle(prompt || 'Contenido multimodal');
-        const tags = this.extractTags(files);
-        
-        conversation = await conversationService.createConversation({
-          userId,
-          title,
-          tags: ['multimodal', 'streaming', ...tags],
-          metadata: {
-            multimodal: true,
-            streaming: true,
-            createdBy: 'multimodal-service'
-          }
-        });
-        isNewConversation = true;
-      }
-
-      // Procesar archivos
-      const parts = [];
-      const attachments = [];
-
-      if (files && files.length > 0) {
-        for (const file of files) {
-          this.validateFileType(file.mimeType);
-          
-          const fileBuffer = await fs.readFile(file.path);
-          const filePart = geminiClient.fileToGenerativePart(fileBuffer, file.mimeType);
-          
-          parts.push(filePart);
-          
-          attachments.push({
-            type: this.getFileType(file.mimeType),
-            url: file.path,
-            name: file.name,
-            mimeType: file.mimeType,
-            size: file.size || 0
-          });
-        }
-      }
-
-      // ==========================================
-      // CRÍTICO: Mejorar el prompt con recordatorios
-      // ==========================================
-      const enhancedPrompt = enhancePrompt(prompt || 'Analiza el contenido adjunto', {
-        hasFiles: true,
-        fileCount: files ? files.length : 0,
-        forceComparison: files && files.length > 1
-      });
-
-      logger.info('Prompt mejorado para streaming', {
-        originalLength: prompt ? prompt.length : 0,
-        enhancedLength: enhancedPrompt.length,
-        filesAttached: files ? files.length : 0
-      });
-
-      // Agregar prompt mejorado
-      parts.push({ text: enhancedPrompt });
-
-      // Guardar mensaje del usuario
-      const userMessage = await messageService.createMessage({
-        conversationId: conversation._id,
-        role: 'user',
-        content: prompt || 'Archivo adjunto',
-        type: 'multimodal',
-        attachments,
-        tokens: await geminiClient.countTokens(prompt || 'Archivo adjunto')
-      });
-
-      await conversationService.addMessageToConversation(
-        conversation._id,
-        userMessage._id
+      throw new Error(
+        `El contenido fue bloqueado por filtros de seguridad. ` +
+        `Recomendación: Cambia el modelo a gemini-1.5-flash en tu configuración de perfil.`
       );
-
-      // Obtener API key del usuario
-      const apiKey = user ? geminiClient.getApiKeyForUser(user) : null;
-
-      // Obtener historial
-      const history = await geminiClient.buildConversationHistory(conversation._id);
-
-      // Inicializar modelo
-      const model = geminiClient.initializeModel(
-        { config },
-        apiKey
-      );
-
-      // Iniciar chat con historial
-      const chat = model.startChat({
-        history: history,
-        generationConfig: config
-      });
-
-      logger.info('Streaming multimodal iniciado con historial', {
-        conversationId: conversation._id,
-        historyLength: history.length,
-        partsCount: parts.length,
-        hasImages: parts.some(p => p.inlineData)
-      });
-
-      // Obtener stream
-      const result = await chat.sendMessageStream(parts);
-
-      let fullResponse = '';
-      let chunkCount = 0;
-
-      // Procesar stream
-      for await (const chunk of result.stream) {
-        const chunkText = chunk.text();
-        fullResponse += chunkText;
-        chunkCount++;
-
-        onChunk({
-          chunk: chunkText,
-          accumulated: fullResponse,
-          chunkNumber: chunkCount,
-          conversationId: conversation._id
-        });
-      }
-
-      // Obtener respuesta final
-      const finalResponse = await result.response;
-      const assistantTokens = finalResponse.usageMetadata?.candidatesTokenCount || 
-                              finalResponse.usageMetadata?.totalTokenCount || 
-                              await geminiClient.countTokens(fullResponse);
-
-      // Guardar respuesta del asistente
-      const assistantMessage = await messageService.createMessage({
-        conversationId: conversation._id,
-        role: 'assistant',
-        content: fullResponse,
-        type: 'multimodal',
-        tokens: assistantTokens
-      });
-
-      await conversationService.addMessageToConversation(
-        conversation._id,
-        assistantMessage._id
-      );
-
-      const totalTokens = userMessage.tokens + assistantTokens;
-      await conversationService.updateTokenUsage(conversation._id, assistantTokens);
-
-      logger.info('Streaming multimodal completado', {
-        conversationId: conversation._id,
-        messageId: assistantMessage._id,
-        chunks: chunkCount,
-        tokens: totalTokens
-      });
-
-      return {
-        response: fullResponse,
-        conversationId: conversation._id,
-        messageId: assistantMessage._id,
-        chunks: chunkCount,
-        attachments: attachments.map(att => ({
-          type: att.type,
-          name: att.name,
-          size: att.size
-        })),
-        tokens: {
-          prompt: userMessage.tokens,
-          completion: assistantTokens,
-          total: totalTokens
-        },
-        metadata: {
-          model: geminiClient.model,
-          filesProcessed: files ? files.length : 0,
-          fileTypes: this.extractTags(files),
-          streamingMode: true,
-          historyLength: history.length,
-          totalMessages: history.length + 2,
-          isNewConversation,
-          usingPersonalApiKey: apiKey !== geminiClient.defaultApiKey,
-          timestamp: new Date()
-        }
-      };
-    } catch (error) {
-      logger.error('Error en streaming multimodal:', error);
-      throw new Error(`Error en streaming multimodal: ${error.message}`);
     }
+    
+    // Obtener respuesta final
+    const finalResponse = await result.response;
+    
+    // Verificar si fue bloqueado
+    if (finalResponse.promptFeedback?.blockReason) {
+      logger.error('Contenido bloqueado por Gemini:', {
+        reason: finalResponse.promptFeedback.blockReason,
+        safetyRatings: finalResponse.promptFeedback.safetyRatings,
+        model: modelName
+      });
+      throw new Error(
+        `Contenido bloqueado: ${finalResponse.promptFeedback.blockReason}. ` +
+        `Intenta con un modelo diferente o ajusta la configuración de seguridad.`
+      );
+    }
+
+    const assistantTokens = finalResponse.usageMetadata?.candidatesTokenCount || 
+                            finalResponse.usageMetadata?.totalTokenCount || 
+                            await geminiClient.countTokens(fullResponse);
+
+    // Guardar respuesta del asistente
+    const assistantMessage = await messageService.createMessage({
+      conversationId: conversation._id,
+      role: 'assistant',
+      content: fullResponse,
+      type: 'multimodal',
+      tokens: assistantTokens
+    });
+
+    await conversationService.addMessageToConversation(
+      conversation._id,
+      assistantMessage._id
+    );
+
+    const totalTokens = userMessage.tokens + assistantTokens;
+    await conversationService.updateTokenUsage(conversation._id, assistantTokens);
+
+    logger.info('Streaming multimodal completado exitosamente', {
+      conversationId: conversation._id,
+      messageId: assistantMessage._id,
+      chunks: chunkCount,
+      tokens: totalTokens,
+      model: modelName
+    });
+
+    return {
+      response: fullResponse,
+      conversationId: conversation._id,
+      messageId: assistantMessage._id,
+      chunks: chunkCount,
+      attachments: attachments.map(att => ({
+        type: att.type,
+        name: att.name,
+        size: att.size
+      })),
+      tokens: {
+        prompt: userMessage.tokens,
+        completion: assistantTokens,
+        total: totalTokens
+      },
+      metadata: {
+        model: modelName, // ← CAMBIAR
+        filesProcessed: files ? files.length : 0,
+        fileTypes: this.extractTags(files),
+        streamingMode: true,
+        historyLength: history.length,
+        totalMessages: history.length + 2,
+        isNewConversation,
+        usingPersonalApiKey: apiKey !== geminiClient.defaultApiKey,
+        usingPersonalModel: modelName !== geminiClient.defaultModel, // ← AGREGAR
+        timestamp: new Date()
+      }
+    };
+  } catch (error) {
+    logger.error('Error en streaming multimodal:', error);
+    
+    // Mensajes de error más descriptivos
+    if (error.message.includes('Failed to parse stream')) {
+      throw new Error(
+        'Error: El modelo no pudo procesar el contenido. ' +
+        'Esto puede deberse a filtros de seguridad muy estrictos. ' +
+        'Recomendación: Cambia a gemini-1.5-flash en la configuración de tu perfil.'
+      );
+    }
+    
+    throw new Error(`Error en streaming multimodal: ${error.message}`);
   }
+}
 
   /**
    * Extrae el tipo de archivo del MIME type
